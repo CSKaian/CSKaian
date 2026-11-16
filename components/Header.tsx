@@ -22,20 +22,41 @@ interface Props {
   onSidebarToggle?: () => void;
   showSidebarToggle?: boolean;
   onlineUsers?: Presence[];
+  offlineUsers?: Presence[];
+  onOpenPresenceModal?: () => void;
 }
+
+const formatRelativeOffline = (iso?: string) => {
+  if (!iso) return 'Offline';
+  const diffSec = Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 1000));
+  if (isNaN(diffSec) || diffSec < 60) return 'Baru saja';
+  const mins = Math.floor(diffSec / 60);
+  if (mins < 60) return `${mins}m lalu`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}j lalu`;
+  const days = Math.floor(hrs / 24);
+  return `${days}h lalu`;
+};
 
 const Header: React.FC<Props> = ({ 
   filters, onFilterChange, onHome, 
   onRefresh, onForceSync, onAdminToggle, onLogout, onShare, onModuleSelect, activeModule, isAdmin, 
   user, syncStatus, isRefreshing, notifications, toast,
-  onSidebarToggle, showSidebarToggle, onlineUsers = []
+  onSidebarToggle, showSidebarToggle, onlineUsers = [], offlineUsers = [], onOpenPresenceModal
 }) => {
   const [currentNotifIndex, setCurrentNotifIndex] = useState(0);
   const [showNotifPopup, setShowNotifPopup] = useState(false);
   const [hasNewNotif, setHasNewNotif] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
 
-  // Other users concurrently browsing the web app
+  const orderedOnlineUsers = useMemo(() => {
+    if (!onlineUsers || !Array.isArray(onlineUsers)) return [];
+    const myEmailLower = (user.email || '').toLowerCase();
+    const others = onlineUsers.filter(u => u.email?.toLowerCase() !== myEmailLower);
+    const me = onlineUsers.filter(u => u.email?.toLowerCase() === myEmailLower);
+    return [...others, ...me];
+  }, [onlineUsers, user.email]);
+
   const otherOnlineUsers = useMemo(() => {
     if (!onlineUsers || !Array.isArray(onlineUsers)) return [];
     return onlineUsers.filter(u => u.email?.toLowerCase() !== user.email?.toLowerCase());
@@ -132,39 +153,95 @@ const Header: React.FC<Props> = ({
         )}
       </AnimatePresence>
 
-      {/* Sedang Buka Web Bersamaan - Foto & Nama User Lain Terlihat Jelas */}
-      {otherOnlineUsers.length > 0 && (
-        <div className="mx-2 md:mx-4 px-3.5 py-2 rounded-2xl bg-gradient-to-r from-emerald-950/60 via-slate-900/90 to-slate-900/80 border border-emerald-500/40 shadow-xl flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 text-left overflow-hidden">
-          <div className="flex items-center gap-2 shrink-0">
-            <div className="relative">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping absolute inset-0"></span>
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 relative block"></span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest whitespace-nowrap leading-none">
-                Buka Web Bersamaan ({otherOnlineUsers.length} User):
+      {/* Status User Online & Offline yang Membuka Web Aplikasi Ini */}
+      {(orderedOnlineUsers.length > 0 || offlineUsers.length > 0) && (
+        <div
+          onClick={() => onOpenPresenceModal?.()}
+          className="mx-2 md:mx-4 px-3.5 py-2 rounded-2xl bg-gradient-to-r from-emerald-950/50 via-slate-900/95 to-slate-900/85 border border-emerald-500/30 shadow-xl flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 text-left overflow-hidden cursor-pointer hover:border-emerald-400/50 transition-all"
+          title="Klik untuk membuka detail User Online & Offline"
+        >
+          <div className="flex items-center gap-2.5 shrink-0">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
-              <span className="text-[7px] text-slate-400 font-bold uppercase mt-0.5 whitespace-nowrap">
-                Rekan lain yang sedang online
+              <span className="text-[10px] font-black text-emerald-300 uppercase tracking-wider whitespace-nowrap">
+                {orderedOnlineUsers.length} Online
               </span>
             </div>
+
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-800/80 border border-white/10">
+              <span className="w-2 h-2 rounded-full bg-slate-400"></span>
+              <span className="text-[10px] font-black text-slate-300 uppercase tracking-wider whitespace-nowrap">
+                {offlineUsers.length} Offline
+              </span>
+            </div>
+
+            {otherOnlineUsers.length > 0 && (
+              <span className="hidden lg:inline text-[9px] font-bold text-slate-400 whitespace-nowrap">
+                • {otherOnlineUsers.length} Rekan Aktif
+              </span>
+            )}
           </div>
 
-          {/* List of Other Users - Foto Profil Google & Nama */}
-          <div className="flex items-center gap-2.5 overflow-x-auto no-scrollbar py-0.5 flex-1 justify-start sm:justify-end">
-            {otherOnlineUsers.map((other, idx) => (
+          {/* List of Online & Offline Users */}
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-0.5 flex-1 justify-start sm:justify-end">
+            {orderedOnlineUsers.map((u, idx) => {
+              const isMe = (u.email || '').toLowerCase() === (user.email || '').toLowerCase();
+              return (
+                <div
+                  key={`on-${u.uid || u.email || idx}`}
+                  className={`flex items-center gap-2 px-2.5 py-1 rounded-xl border shrink-0 transition-all shadow-sm ${
+                    isMe
+                      ? 'bg-indigo-600/20 border-indigo-400/30'
+                      : 'bg-emerald-950/40 border-emerald-500/30'
+                  }`}
+                  title={`ONLINE: ${u.displayName || u.email} (${u.outlet || 'Sistem'})`}
+                >
+                  <div className="relative shrink-0">
+                    <div className="w-6 h-6 rounded-lg overflow-hidden bg-gradient-to-br from-emerald-500 to-teal-600 border border-white/20 flex items-center justify-center text-[9px] font-black text-white">
+                      {u.photoURL ? (
+                        <img
+                          src={u.photoURL}
+                          alt={u.displayName || u.email}
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = 'none';
+                          }}
+                        />
+                      ) : (
+                        <span>{(u.displayName || u.email || 'U').charAt(0).toUpperCase()}</span>
+                      )}
+                    </div>
+                    <span className="absolute -bottom-0.5 -right-0.5 w-2 h-2 bg-emerald-400 rounded-full border border-slate-900"></span>
+                  </div>
+                  <div className="flex flex-col leading-none text-left">
+                    <span className="text-[10px] font-black text-white whitespace-nowrap">
+                      {u.displayName || (u.email || '').split('@')[0]}
+                      {isMe && <span className="ml-1 text-[8px] text-indigo-300">(Anda)</span>}
+                    </span>
+                    <span className="text-[7px] font-bold text-emerald-300 uppercase mt-0.5 whitespace-nowrap">
+                      ONLINE • {u.outlet || 'AKTIF'}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+
+            {offlineUsers.slice(0, 6).map((u, idx) => (
               <div
-                key={other.uid || other.email || idx}
-                className="flex items-center gap-2 bg-slate-800/90 hover:bg-slate-700/90 px-2.5 py-1.5 rounded-2xl border border-white/10 shrink-0 transition-all shadow-md group cursor-pointer active:scale-95"
-                title={`${other.displayName || other.email} sedang membuka ${other.outlet || 'Sistem'}`}
+                key={`off-${u.uid || u.email || idx}`}
+                className="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-slate-800/60 border border-white/10 shrink-0 opacity-80"
+                title={`OFFLINE: ${u.displayName || u.email} (${u.outlet || 'Sistem'}) - ${formatRelativeOffline(u.lastOfflineAt || u.lastSeen)}`}
               >
-                {/* Foto Profil Google User Lain */}
                 <div className="relative shrink-0">
-                  <div className="w-7 h-7 rounded-xl overflow-hidden bg-gradient-to-br from-indigo-500 to-purple-600 border border-white/20 flex items-center justify-center text-[10px] font-black text-white shadow-sm">
-                    {other.photoURL ? (
+                  <div className="w-6 h-6 rounded-lg overflow-hidden bg-slate-700 border border-white/10 flex items-center justify-center text-[9px] font-black text-slate-300 grayscale">
+                    {u.photoURL ? (
                       <img
-                        src={other.photoURL}
-                        alt={other.displayName || other.email}
+                        src={u.photoURL}
+                        alt={u.displayName || u.email}
                         className="w-full h-full object-cover"
                         referrerPolicy="no-referrer"
                         onError={(e) => {
@@ -172,19 +249,17 @@ const Header: React.FC<Props> = ({
                         }}
                       />
                     ) : (
-                      <span>{(other.displayName || other.email || 'U').charAt(0).toUpperCase()}</span>
+                      <span>{(u.displayName || u.email || 'U').charAt(0).toUpperCase()}</span>
                     )}
                   </div>
-                  <span className="absolute -bottom-0.5 -right-0.5 w-2 h-2 bg-emerald-500 rounded-full border border-slate-900 ring-1 ring-emerald-400"></span>
+                  <span className="absolute -bottom-0.5 -right-0.5 w-2 h-2 bg-slate-400 rounded-full border border-slate-900"></span>
                 </div>
-
-                {/* Nama & Outlet User Lain */}
                 <div className="flex flex-col leading-none text-left">
-                  <span className="text-[10px] font-black text-white group-hover:text-emerald-300 transition-colors whitespace-nowrap">
-                    {other.displayName || (other.email || '').split('@')[0]}
+                  <span className="text-[10px] font-bold text-slate-300 whitespace-nowrap">
+                    {u.displayName || (u.email || '').split('@')[0]}
                   </span>
-                  <span className="text-[7px] font-bold text-indigo-400 uppercase mt-0.5 whitespace-nowrap">
-                    {other.outlet || 'AKTIF'}
+                  <span className="text-[7px] font-bold text-slate-400 uppercase mt-0.5 whitespace-nowrap">
+                    OFFLINE • {formatRelativeOffline(u.lastOfflineAt || u.lastSeen)}
                   </span>
                 </div>
               </div>

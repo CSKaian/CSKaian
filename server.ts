@@ -10,6 +10,7 @@ const BACKUPS_DIR = path.join(rootDir, "backups");
 const DATA_DIR = path.join(rootDir, "data_store");
 const OUTLETS_FILE = path.join(DATA_DIR, "outlets.json");
 const SYSTEM_CONFIG_FILE = path.join(DATA_DIR, "system_config.json");
+const PRESENCE_FILE = path.join(DATA_DIR, "presence_users.json");
 
 // Ensure directories exist
 try {
@@ -165,12 +166,14 @@ async function startServer() {
     res.status(200).json({ status: "ok" });
   });
 
-  // In-memory active presence tracker (tanpa snapshot, zero Firestore read/write quota!)
+  // In-memory & persisted presence tracker (tanpa snapshot, zero Firestore read/write quota!)
   interface ServerPresenceEntry {
     uid: string;
     email: string;
     outlet: string;
     lastSeen: string;
+    lastOfflineAt?: string;
+    status?: 'ONLINE' | 'OFFLINE';
     timestamp: number;
     photoURL?: string;
     displayName?: string;
@@ -187,8 +190,54 @@ async function startServer() {
   }
 
   const activePresenceUsers = new Map<string, ServerPresenceEntry>();
+  const knownPresenceDirectory = new Map<string, ServerPresenceEntry>();
   const presenceEvents: ServerPresenceEvent[] = [];
   let presenceEventSeq = 0;
+
+  // Load previously known users (mark all as OFFLINE on server boot until heartbeat arrives)
+  try {
+    if (fs.existsSync(PRESENCE_FILE)) {
+      const savedList = JSON.parse(fs.readFileSync(PRESENCE_FILE, "utf-8"));
+      if (Array.isArray(savedList)) {
+        savedList.forEach((item: any) => {
+          const cleanEmail = (item?.email || '').toLowerCase().trim();
+          if (cleanEmail) {
+            knownPresenceDirectory.set(cleanEmail, {
+              uid: item.uid || cleanEmail,
+              email: cleanEmail,
+              outlet: item.outlet || 'SEMUA OUTLET',
+              photoURL: item.photoURL || '',
+              displayName: item.displayName || cleanEmail.split('@')[0],
+              lastSeen: item.lastSeen || new Date().toISOString(),
+              lastOfflineAt: item.lastOfflineAt || item.lastSeen || new Date().toISOString(),
+              status: 'OFFLINE',
+              timestamp: Number(item.timestamp) || Date.now()
+            });
+          }
+        });
+      }
+    }
+  } catch (err) {
+    console.warn("Failed loading presence_users.json:", err);
+  }
+
+  let presenceWriteTimer: ReturnType<typeof setTimeout> | null = null;
+  const schedulePresenceSave = () => {
+    if (presenceWriteTimer) return;
+    presenceWriteTimer = setTimeout(() => {
+      presenceWriteTimer = null;
+      try {
+        const list = Array.from(knownPresenceDirectory.values())
+          .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+          .slice(0, 100);
+        const tmp = `${PRESENCE_FILE}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify(list, null, 2), "utf-8");
+        fs.renameSync(tmp, PRESENCE_FILE);
+      } catch (err) {
+        console.warn("Failed saving presence_users.json:", err);
+      }
+    }, 1000);
+  };
 
   const pushPresenceEvent = (
     type: 'LOGIN' | 'LOGOUT',
@@ -223,8 +272,27 @@ async function startServer() {
     return found;
   };
 
+  const markDirectoryOffline = (entry: ServerPresenceEntry, now: number) => {
+    const cleanEmail = (entry.email || '').toLowerCase().trim();
+    if (!cleanEmail) return;
+    const prev = knownPresenceDirectory.get(cleanEmail);
+    knownPresenceDirectory.set(cleanEmail, {
+      ...(prev || entry),
+      uid: entry.uid || prev?.uid || cleanEmail,
+      email: cleanEmail,
+      displayName: entry.displayName || prev?.displayName || cleanEmail.split('@')[0],
+      outlet: entry.outlet || prev?.outlet || 'SEMUA OUTLET',
+      photoURL: entry.photoURL || prev?.photoURL || '',
+      lastSeen: entry.lastSeen || prev?.lastSeen || new Date(now).toISOString(),
+      lastOfflineAt: new Date(now).toISOString(),
+      status: 'OFFLINE',
+      timestamp: now
+    });
+    schedulePresenceSave();
+  };
+
   const pruneExpiredPresence = (now: number) => {
-    const cutoff = now - 15 * 1000;
+    const cutoff = now - 20 * 1000;
     const expiredByEmail = new Map<string, ServerPresenceEntry>();
 
     activePresenceUsers.forEach((user, key) => {
@@ -239,6 +307,7 @@ async function startServer() {
 
     expiredByEmail.forEach((lastEntry, cleanEmail) => {
       if (!hasActiveEmailSession(cleanEmail)) {
+        markDirectoryOffline(lastEntry, now);
         pushPresenceEvent('LOGOUT', lastEntry, now);
       }
     });
@@ -258,16 +327,20 @@ async function startServer() {
       const key = uid || cleanEmail || 'anonymous';
       if (key && cleanEmail) {
         const alreadyOnline = hasActiveEmailSession(cleanEmail);
+        const existingDir = knownPresenceDirectory.get(cleanEmail);
         const entry: ServerPresenceEntry = {
           uid: key,
           email: cleanEmail,
-          outlet: outlet || 'SEMUA OUTLET',
-          photoURL: photoURL || '',
-          displayName: displayName || (cleanEmail ? cleanEmail.split('@')[0] : 'User'),
+          outlet: outlet || existingDir?.outlet || 'SEMUA OUTLET',
+          photoURL: photoURL || existingDir?.photoURL || '',
+          displayName: displayName || existingDir?.displayName || (cleanEmail ? cleanEmail.split('@')[0] : 'User'),
           lastSeen: new Date(now).toISOString(),
+          status: 'ONLINE',
           timestamp: now
         };
         activePresenceUsers.set(key, entry);
+        knownPresenceDirectory.set(cleanEmail, entry);
+        schedulePresenceSave();
         if (!alreadyOnline) {
           pushPresenceEvent('LOGIN', entry, now);
         }
@@ -278,7 +351,7 @@ async function startServer() {
     }
   });
 
-  // Logout / Keluar: Langsung hapus user dari status online saat itu juga (0 detik)
+  // Logout / Keluar: Langsung pindahkan user dari Online menjadi Offline saat itu juga
   const removeUserPresence = (req: any, res: any) => {
     try {
       let body = req.body || {};
@@ -314,6 +387,7 @@ async function startServer() {
 
       removedByEmail.forEach((removedEntry, cleanEmail) => {
         if (!hasActiveEmailSession(cleanEmail)) {
+          markDirectoryOffline(removedEntry, now);
           pushPresenceEvent('LOGOUT', removedEntry, now);
         }
       });
@@ -334,20 +408,35 @@ async function startServer() {
       pruneExpiredPresence(now);
 
       const activeList: ServerPresenceEntry[] = [];
-      const seenEmails = new Set<string>();
+      const onlineEmails = new Set<string>();
 
       activePresenceUsers.forEach((user, key) => {
         const emailKey = (user.email || key).toLowerCase().trim();
-        if (!seenEmails.has(emailKey)) {
-          seenEmails.add(emailKey);
-          activeList.push(user);
+        if (!onlineEmails.has(emailKey)) {
+          onlineEmails.add(emailKey);
+          activeList.push({ ...user, status: 'ONLINE' });
         }
       });
+
+      const offlineList: ServerPresenceEntry[] = [];
+      knownPresenceDirectory.forEach((dirUser, emailKey) => {
+        if (!onlineEmails.has(emailKey)) {
+          offlineList.push({ ...dirUser, status: 'OFFLINE' });
+        }
+      });
+
+      activeList.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      offlineList.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
       const eventCutoff = now - 2 * 60 * 1000;
       const recentEvents = presenceEvents.filter(ev => ev.timestamp >= eventCutoff);
 
-      res.json({ success: true, users: activeList, events: recentEvents });
+      res.json({
+        success: true,
+        users: activeList,
+        offlineUsers: offlineList,
+        events: recentEvents
+      });
     } catch {
       res.status(500).json({ error: "Failed to get presence" });
     }

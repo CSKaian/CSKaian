@@ -6,7 +6,7 @@ import { safeStorage, safeClipboard, safeWindow } from './lib/safeStorage';
 import { toLocalDateStr } from './lib/dateUtils';
 import { calculateLeaveEntitlement } from './lib/staffUtils';
 import { auth, db } from './firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, setDoc, serverTimestamp } from 'firebase/firestore';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { motion, AnimatePresence } from 'motion/react';
 import Header from './components/Header';
@@ -187,6 +187,8 @@ const App: React.FC = () => {
   const [birthdayNotifications, setBirthdayNotifications] = useState<Notification[]>([]);
   const [allOutletsData, setAllOutletsData] = useState<Record<string, any>>({});
   const [onlineUsers, setOnlineUsers] = useState<Presence[]>([]);
+  const [offlineUsers, setOfflineUsers] = useState<Presence[]>([]);
+  const [isPresenceModalOpen, setIsPresenceModalOpen] = useState(false);
   const [presencePopups, setPresencePopups] = useState<PresenceEvent[]>([]);
   const [isAllOutletsLoading, setIsAllOutletsLoading] = useState(false);
 
@@ -464,7 +466,7 @@ const App: React.FC = () => {
     return unsubscribe;
   }, [user.isLoggedIn, syncTrigger]);
 
-  // Realtime Presence Tracker for Concurrent Active Users (Server-driven, Tanpa Firestore Snapshots / Zero Quota)
+  // Realtime Presence Tracker for Concurrent Online & Offline Users (Server + Non-Snapshot Firestore Poll, Zero onSnapshot)
   useEffect(() => {
     if (!(user.isLoggedIn && user.email) && !isPublicView) return;
 
@@ -474,23 +476,173 @@ const App: React.FC = () => {
       sessionStorage.setItem('SH_TAB_SESSION_ID', tabSessionId);
     }
 
-    const myEmail = (user.email || '').toLowerCase().trim();
+    const storedEmail = safeStorage.getItem('MANUAL_USER_EMAIL') || safeStorage.getItem('BARN_USER_SESSION') || '';
+    const myEmail = (user.email || (isPublicView ? (storedEmail || `viewer.${tabSessionId}@guest.local`) : '')).toLowerCase().trim();
     const uid = auth.currentUser?.uid || myEmail || 'viewer';
     const presenceKey = `${uid}_${tabSessionId}`;
 
     const userPhoto = user.photoURL || auth.currentUser?.photoURL || safeStorage.getItem('BARN_USER_PHOTO') || '';
-    const userDisplayName = user.displayName || auth.currentUser?.displayName || safeStorage.getItem('BARN_USER_NAME') || (user.email ? user.email.split('@')[0] : 'User');
+    const userDisplayName = user.displayName || auth.currentUser?.displayName || safeStorage.getItem('BARN_USER_NAME') || (user.email ? user.email.split('@')[0] : (isPublicView ? `Pengunjung (${tabSessionId.slice(0, 4)})` : 'User'));
+    const activeOutletLabel = user.selectedOutlet || (isPublicView ? 'REGIONAL VIEW' : 'SEMUA OUTLET');
+
+    const cloudPresenceMapRef = new Map<string, Presence>();
+    let latestServerOnline: Presence[] = [];
+    let latestServerOffline: Presence[] = [];
+
+    const parseTimestampMs = (val: any): number => {
+      if (!val) return 0;
+      if (typeof val === 'number') return val;
+      if (typeof val === 'string') {
+        const ms = Date.parse(val);
+        return isNaN(ms) ? 0 : ms;
+      }
+      if (typeof val?.toMillis === 'function') return val.toMillis();
+      if (typeof val?.seconds === 'number') return val.seconds * 1000;
+      return 0;
+    };
+
+    const mergeAndPublishPresence = (serverEvents: PresenceEvent[] = []) => {
+      const now = Date.now();
+      const onlineByEmail = new Map<string, Presence>();
+      const offlineByEmail = new Map<string, Presence>();
+
+      const upsertUser = (u: Presence, isFreshOnline: boolean) => {
+        const cleanEmail = (u.email || '').toLowerCase().trim();
+        if (!cleanEmail) return;
+        const ts = u.timestamp || parseTimestampMs(u.lastSeen) || 0;
+        const normalized: Presence = {
+          ...u,
+          email: cleanEmail,
+          displayName: u.displayName || cleanEmail.split('@')[0],
+          outlet: u.outlet || 'SEMUA OUTLET',
+          lastSeen: u.lastSeen || new Date(ts || now).toISOString(),
+          timestamp: ts,
+          status: isFreshOnline ? 'ONLINE' : 'OFFLINE'
+        };
+
+        if (isFreshOnline) {
+          offlineByEmail.delete(cleanEmail);
+          const prev = onlineByEmail.get(cleanEmail);
+          if (!prev || (normalized.timestamp || 0) >= (prev.timestamp || 0)) {
+            onlineByEmail.set(cleanEmail, normalized);
+          }
+        } else if (!onlineByEmail.has(cleanEmail)) {
+          const prev = offlineByEmail.get(cleanEmail);
+          if (!prev || (normalized.timestamp || 0) >= (prev.timestamp || 0)) {
+            offlineByEmail.set(cleanEmail, normalized);
+          }
+        }
+      };
+
+      // 1. Server authoritative online & offline directory
+      latestServerOnline.forEach(u => upsertUser(u, true));
+      latestServerOffline.forEach(u => upsertUser(u, false));
+
+      // 2. Non-snapshot Firestore cross-origin presence (e.g. Dev URL <-> Shared URL)
+      cloudPresenceMapRef.forEach((u) => {
+        const ts = u.timestamp || parseTimestampMs(u.lastSeen) || 0;
+        const isOnlineCloud = u.status !== 'OFFLINE' && (now - ts) <= 45 * 1000;
+        upsertUser(u, isOnlineCloud);
+      });
+
+      const mergedOnline = Array.from(onlineByEmail.values()).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      const mergedOffline = Array.from(offlineByEmail.values()).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+      setOnlineUsers(mergedOnline);
+      setOfflineUsers(mergedOffline);
+
+      const otherUsersMap = new Map<string, Presence>();
+      mergedOnline.forEach((u) => {
+        const uEmail = (u.email || '').toLowerCase().trim();
+        if (uEmail && uEmail !== myEmail) {
+          otherUsersMap.set(uEmail, u);
+        }
+      });
+
+      const popupsToPush: PresenceEvent[] = [];
+      const tryPushPopup = (ev: PresenceEvent) => {
+        const evEmail = (ev.email || '').toLowerCase().trim();
+        if (!evEmail || evEmail === myEmail) return;
+        const dedupeKey = `${ev.type}_${evEmail}`;
+        const lastShown = lastPopupByTypeEmailRef.current.get(dedupeKey) || 0;
+        if (now - lastShown < 4000) return;
+        lastPopupByTypeEmailRef.current.set(dedupeKey, now);
+        popupsToPush.push({
+          ...ev,
+          email: evEmail
+        });
+      };
+
+      if (!hasInitializedPresenceRef.current) {
+        serverEvents.forEach((ev) => {
+          if (now - ev.timestamp > 6000) {
+            seenPresenceEventIdsRef.current.add(ev.id);
+          } else if (!seenPresenceEventIdsRef.current.has(ev.id)) {
+            seenPresenceEventIdsRef.current.add(ev.id);
+            tryPushPopup(ev);
+          }
+        });
+        prevOtherUsersMapRef.current = otherUsersMap;
+        hasInitializedPresenceRef.current = true;
+      } else {
+        serverEvents.forEach((ev) => {
+          if (!seenPresenceEventIdsRef.current.has(ev.id)) {
+            seenPresenceEventIdsRef.current.add(ev.id);
+            tryPushPopup(ev);
+          }
+        });
+
+        otherUsersMap.forEach((currUser, uEmail) => {
+          if (!prevOtherUsersMapRef.current.has(uEmail)) {
+            tryPushPopup({
+              id: `LOGIN_DIFF_${uEmail}_${now}`,
+              type: 'LOGIN',
+              email: uEmail,
+              displayName: currUser.displayName || uEmail.split('@')[0],
+              outlet: currUser.outlet || 'SEMUA OUTLET',
+              photoURL: currUser.photoURL || '',
+              timestamp: now
+            });
+          }
+        });
+
+        prevOtherUsersMapRef.current.forEach((prevUser, uEmail) => {
+          if (!otherUsersMap.has(uEmail)) {
+            tryPushPopup({
+              id: `LOGOUT_DIFF_${uEmail}_${now}`,
+              type: 'LOGOUT',
+              email: uEmail,
+              displayName: prevUser.displayName || uEmail.split('@')[0],
+              outlet: prevUser.outlet || 'SEMUA OUTLET',
+              photoURL: prevUser.photoURL || '',
+              timestamp: now
+            });
+          }
+        });
+
+        prevOtherUsersMapRef.current = otherUsersMap;
+      }
+
+      if (seenPresenceEventIdsRef.current.size > 200) {
+        const recentIds = new Set(serverEvents.map(e => e.id));
+        seenPresenceEventIdsRef.current = recentIds;
+      }
+
+      if (popupsToPush.length > 0) {
+        enqueuePresencePopups(popupsToPush);
+      }
+    };
 
     const sendHeartbeat = async () => {
-      if (!(user.isLoggedIn && user.email)) return;
+      if (!myEmail) return;
       try {
         await fetch('/api/presence', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             uid: presenceKey,
-            email: user.email,
-            outlet: user.selectedOutlet || 'SEMUA OUTLET',
+            email: myEmail,
+            outlet: activeOutletLabel,
             photoURL: userPhoto,
             displayName: userDisplayName
           })
@@ -498,123 +650,83 @@ const App: React.FC = () => {
       } catch (e) {}
     };
 
-    let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-    if (user.isLoggedIn && user.email) {
-      sendHeartbeat();
-      heartbeatTimer = setInterval(sendHeartbeat, 6000); // 6s heartbeat
-    }
+    const sendCloudHeartbeat = async () => {
+      if (!myEmail || !auth.currentUser?.uid || isQuotaExceeded()) return;
+      try {
+        const pRef = doc(db, 'presence', auth.currentUser.uid);
+        await setDoc(pRef, {
+          uid: auth.currentUser.uid,
+          email: myEmail,
+          displayName: userDisplayName,
+          outlet: activeOutletLabel,
+          photoURL: userPhoto || '',
+          lastSeen: new Date().toISOString(),
+          timestamp: serverTimestamp(),
+          status: 'ONLINE'
+        }, { merge: true });
+      } catch {}
+    };
 
-    const fetchPresence = async () => {
+    const fetchServerPresence = async () => {
       try {
         const res = await fetch('/api/presence');
         if (!res.ok) return;
         const data = await res.json();
-        const usersList: Presence[] = Array.isArray(data.users) ? data.users : [];
+        latestServerOnline = Array.isArray(data.users) ? data.users : [];
+        latestServerOffline = Array.isArray(data.offlineUsers) ? data.offlineUsers : [];
         const serverEvents: PresenceEvent[] = Array.isArray(data.events) ? data.events : [];
-
-        setOnlineUsers(usersList);
-
-        const now = Date.now();
-        const otherUsersMap = new Map<string, Presence>();
-        usersList.forEach((u) => {
-          const uEmail = (u.email || '').toLowerCase().trim();
-          if (uEmail && uEmail !== myEmail) {
-            otherUsersMap.set(uEmail, u);
-          }
-        });
-
-        const popupsToPush: PresenceEvent[] = [];
-        const tryPushPopup = (ev: PresenceEvent) => {
-          const evEmail = (ev.email || '').toLowerCase().trim();
-          if (!evEmail || evEmail === myEmail) return;
-          const dedupeKey = `${ev.type}_${evEmail}`;
-          const lastShown = lastPopupByTypeEmailRef.current.get(dedupeKey) || 0;
-          if (now - lastShown < 4000) return;
-          lastPopupByTypeEmailRef.current.set(dedupeKey, now);
-          popupsToPush.push({
-            ...ev,
-            email: evEmail
-          });
-        };
-
-        if (!hasInitializedPresenceRef.current) {
-          // On initial poll, skip stale events older than 6 seconds so old history doesn't spam,
-          // while capturing anyone who just logged in or logged out within the last 6 seconds.
-          serverEvents.forEach((ev) => {
-            if (now - ev.timestamp > 6000) {
-              seenPresenceEventIdsRef.current.add(ev.id);
-            } else if (!seenPresenceEventIdsRef.current.has(ev.id)) {
-              seenPresenceEventIdsRef.current.add(ev.id);
-              tryPushPopup(ev);
-            }
-          });
-          prevOtherUsersMapRef.current = otherUsersMap;
-          hasInitializedPresenceRef.current = true;
-        } else {
-          // 1. Process authoritative server LOGIN/LOGOUT events
-          serverEvents.forEach((ev) => {
-            if (!seenPresenceEventIdsRef.current.has(ev.id)) {
-              seenPresenceEventIdsRef.current.add(ev.id);
-              tryPushPopup(ev);
-            }
-          });
-
-          // 2. Client-side transition fallback (handles edge cases like server restart)
-          otherUsersMap.forEach((currUser, uEmail) => {
-            if (!prevOtherUsersMapRef.current.has(uEmail)) {
-              tryPushPopup({
-                id: `LOGIN_DIFF_${uEmail}_${now}`,
-                type: 'LOGIN',
-                email: uEmail,
-                displayName: currUser.displayName || uEmail.split('@')[0],
-                outlet: currUser.outlet || 'SEMUA OUTLET',
-                photoURL: currUser.photoURL || '',
-                timestamp: now
-              });
-            }
-          });
-
-          prevOtherUsersMapRef.current.forEach((prevUser, uEmail) => {
-            if (!otherUsersMap.has(uEmail)) {
-              tryPushPopup({
-                id: `LOGOUT_DIFF_${uEmail}_${now}`,
-                type: 'LOGOUT',
-                email: uEmail,
-                displayName: prevUser.displayName || uEmail.split('@')[0],
-                outlet: prevUser.outlet || 'SEMUA OUTLET',
-                photoURL: prevUser.photoURL || '',
-                timestamp: now
-              });
-            }
-          });
-
-          prevOtherUsersMapRef.current = otherUsersMap;
-        }
-
-        if (seenPresenceEventIdsRef.current.size > 200) {
-          const recentIds = new Set(serverEvents.map(e => e.id));
-          seenPresenceEventIdsRef.current = recentIds;
-        }
-
-        if (popupsToPush.length > 0) {
-          enqueuePresencePopups(popupsToPush);
-        }
+        mergeAndPublishPresence(serverEvents);
       } catch {}
     };
 
-    fetchPresence();
-    const pollTimer = setInterval(fetchPresence, 2000); // 2s fast poll for immediate sync across all users
+    const fetchCloudPresenceOnce = async () => {
+      if (isQuotaExceeded()) return;
+      try {
+        // Strictly getDocs (one-time poll, NEVER onSnapshot)
+        const snap = await getDocs(collection(db, 'presence'));
+        cloudPresenceMapRef.clear();
+        snap.forEach((docSnap) => {
+          const d = docSnap.data() as any;
+          const cleanEmail = (d?.email || '').toLowerCase().trim();
+          if (cleanEmail) {
+            const ts = parseTimestampMs(d.timestamp) || parseTimestampMs(d.lastSeen) || Date.now();
+            cloudPresenceMapRef.set(cleanEmail, {
+              uid: d.uid || docSnap.id,
+              email: cleanEmail,
+              displayName: d.displayName || cleanEmail.split('@')[0],
+              outlet: d.outlet || 'SEMUA OUTLET',
+              photoURL: d.photoURL || '',
+              lastSeen: d.lastSeen || new Date(ts).toISOString(),
+              lastOfflineAt: d.lastOfflineAt,
+              status: d.status === 'OFFLINE' ? 'OFFLINE' : 'ONLINE',
+              timestamp: ts
+            });
+          }
+        });
+        mergeAndPublishPresence([]);
+      } catch {}
+    };
+
+    sendHeartbeat();
+    sendCloudHeartbeat();
+    fetchServerPresence();
+    fetchCloudPresenceOnce();
+
+    const heartbeatTimer = setInterval(sendHeartbeat, 5000);
+    const cloudHeartbeatTimer = setInterval(sendCloudHeartbeat, 25000);
+    const pollTimer = setInterval(fetchServerPresence, 2000);
+    const cloudPollTimer = setInterval(fetchCloudPresenceOnce, 10000);
 
     const handleUnload = () => {
-      if (!(user.isLoggedIn && user.email)) return;
-      const payload = JSON.stringify({ uid: presenceKey, email: user.email });
+      if (!myEmail) return;
+      const payload = JSON.stringify({ uid: presenceKey, email: myEmail });
       if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
         try {
           const blob = new Blob([payload], { type: 'application/json' });
-          navigator.sendBeacon(`/api/presence/logout?email=${encodeURIComponent(user.email)}&uid=${encodeURIComponent(presenceKey)}`, blob);
+          navigator.sendBeacon(`/api/presence/logout?email=${encodeURIComponent(myEmail)}&uid=${encodeURIComponent(presenceKey)}`, blob);
         } catch {}
       } else {
-        fetch(`/api/presence/logout?email=${encodeURIComponent(user.email)}&uid=${encodeURIComponent(presenceKey)}`, {
+        fetch(`/api/presence/logout?email=${encodeURIComponent(myEmail)}&uid=${encodeURIComponent(presenceKey)}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: payload,
@@ -627,8 +739,10 @@ const App: React.FC = () => {
     window.addEventListener('pagehide', handleUnload);
 
     return () => {
-      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      clearInterval(heartbeatTimer);
+      clearInterval(cloudHeartbeatTimer);
       clearInterval(pollTimer);
+      clearInterval(cloudPollTimer);
       window.removeEventListener('beforeunload', handleUnload);
       window.removeEventListener('pagehide', handleUnload);
     };
@@ -2235,9 +2349,24 @@ const App: React.FC = () => {
     const presenceKey = currentUid ? `${currentUid}_${tabSessionId}` : '';
 
     try {
-      // 1. Instantly remove this user from local onlineUsers state (0 ms delay - immediate UI disappearance)
+      // 1. Instantly move this user from onlineUsers to offlineUsers locally
       if (loggingOutEmail) {
-        setOnlineUsers(prev => prev.filter(u => u.email?.toLowerCase() !== loggingOutEmail.toLowerCase()));
+        const lowerOut = loggingOutEmail.toLowerCase();
+        setOnlineUsers(prev => prev.filter(u => u.email?.toLowerCase() !== lowerOut));
+        setOfflineUsers(prev => {
+          const filtered = prev.filter(u => u.email?.toLowerCase() !== lowerOut);
+          return [{
+            uid: currentUid || lowerOut,
+            email: lowerOut,
+            displayName: user.displayName || lowerOut.split('@')[0],
+            outlet: user.selectedOutlet || 'SEMUA OUTLET',
+            photoURL: user.photoURL || '',
+            lastSeen: new Date().toISOString(),
+            lastOfflineAt: new Date().toISOString(),
+            status: 'OFFLINE',
+            timestamp: Date.now()
+          }, ...filtered];
+        });
       }
       setPresencePopups([]);
       hasInitializedPresenceRef.current = false;
@@ -2245,7 +2374,21 @@ const App: React.FC = () => {
       seenPresenceEventIdsRef.current.clear();
       lastPopupByTypeEmailRef.current.clear();
 
-      // 2. Instantly notify server to wipe active presence entry (0 delay for all other users)
+      // 2. Instantly notify server & Firestore (without snapshot) to mark user Offline
+      if (loggingOutEmail && currentUid && !isQuotaExceeded()) {
+        setDoc(doc(db, 'presence', currentUid), {
+          uid: currentUid,
+          email: loggingOutEmail.toLowerCase(),
+          displayName: user.displayName || loggingOutEmail.split('@')[0],
+          outlet: user.selectedOutlet || 'SEMUA OUTLET',
+          photoURL: user.photoURL || '',
+          lastSeen: new Date().toISOString(),
+          lastOfflineAt: new Date().toISOString(),
+          timestamp: serverTimestamp(),
+          status: 'OFFLINE'
+        }, { merge: true }).catch(() => {});
+      }
+
       if (loggingOutEmail) {
         const payload = JSON.stringify({ email: loggingOutEmail, uid: presenceKey, logoutAll: true });
         fetch(`/api/presence/logout?email=${encodeURIComponent(loggingOutEmail)}&uid=${encodeURIComponent(presenceKey)}&logoutAll=true`, {
@@ -2723,6 +2866,8 @@ const App: React.FC = () => {
             notifications={[...birthdayNotifications, ...notifications]}
             toast={toast}
             onlineUsers={onlineUsers}
+            offlineUsers={offlineUsers}
+            onOpenPresenceModal={() => setIsPresenceModalOpen(true)}
           />
         </div>
         {isQuotaExceeded() && (
@@ -2807,7 +2952,18 @@ const App: React.FC = () => {
         )}
       </AnimatePresence>
       <PresencePopupStack popups={presencePopups} onDismiss={dismissPresencePopup} />
-      <RealtimeFeatures user={user} isAdmin={isAdmin} globalData={globalData} outletMonthlyData={outletMonthlyData} filters={filters} onlineUsers={onlineUsers} setOnlineUsers={setOnlineUsers} />
+      <RealtimeFeatures
+        user={user}
+        isAdmin={isAdmin}
+        globalData={globalData}
+        outletMonthlyData={outletMonthlyData}
+        filters={filters}
+        onlineUsers={onlineUsers}
+        setOnlineUsers={setOnlineUsers}
+        offlineUsers={offlineUsers}
+        isPresenceModalOpen={isPresenceModalOpen}
+        setIsPresenceModalOpen={setIsPresenceModalOpen}
+      />
       <DailyReminderPopup user={user} isOnDashboard={activeModule === ModuleType.DASHBOARD} />
       <OutletControlModal
         isOpen={isOutletControlOpen}

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { auth } from '../firebase';
+import { auth, db } from '../firebase';
 import { GoogleAuthProvider, signInWithPopup, onAuthStateChanged, User } from 'firebase/auth';
-import { Outlet, ModuleType, OutletConfig } from '../types';
+import { collection, getDocs } from 'firebase/firestore';
+import { Outlet, ModuleType, OutletConfig, Presence } from '../types';
 import { OUTLETS, getActiveOutletConfigs } from '../constants';
 import { safeStorage } from '../lib/safeStorage';
 import { OutletControlModal } from './OutletControlModal';
@@ -44,6 +45,9 @@ const LoginModule: React.FC<Props> = ({ onLogin, onPublicView, isFullScreen, onT
   const [selectedOutlet, setSelectedOutlet] = useState<Outlet | ''>(savedOutlet);
   const [emailInput, setEmailInput] = useState<string>(() => savedEmail || '');
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [loginOnlineUsers, setLoginOnlineUsers] = useState<Presence[]>([]);
+  const [loginOfflineUsers, setLoginOfflineUsers] = useState<Presence[]>([]);
+  const [showPresencePanel, setShowPresencePanel] = useState<boolean>(true);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
@@ -63,6 +67,100 @@ const LoginModule: React.FC<Props> = ({ onLogin, onPublicView, isFullScreen, onT
 
   const manualEmail = safeStorage.getItem('MANUAL_USER_EMAIL') || emailInput || '';
   const activeSessionEmail = (firebaseUser && firebaseUser.email) || manualEmail || '';
+
+  // Poll Online & Offline users opening the same web app (without snapshot)
+  useEffect(() => {
+    let tabId = '';
+    try {
+      tabId = sessionStorage.getItem('SH_TAB_SESSION_ID') || Math.random().toString(36).substring(2, 9);
+      sessionStorage.setItem('SH_TAB_SESSION_ID', tabId);
+    } catch {
+      tabId = 'login';
+    }
+
+    const pingLoginPresence = async () => {
+      const emailToPing = (activeSessionEmail || '').toLowerCase().trim();
+      if (!emailToPing || !emailToPing.includes('@')) return;
+      try {
+        await fetch('/api/presence', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            uid: `${auth.currentUser?.uid || emailToPing}_${tabId}`,
+            email: emailToPing,
+            outlet: selectedOutlet || 'HALAMAN LOGIN',
+            photoURL: firebaseUser?.photoURL || safeStorage.getItem('BARN_USER_PHOTO') || '',
+            displayName: firebaseUser?.displayName || safeStorage.getItem('BARN_USER_NAME') || emailToPing.split('@')[0]
+          })
+        });
+      } catch {}
+    };
+
+    const loadPresence = async () => {
+      const onlineMap = new Map<string, Presence>();
+      const offlineMap = new Map<string, Presence>();
+      const now = Date.now();
+
+      try {
+        const res = await fetch('/api/presence');
+        if (res.ok) {
+          const d = await res.json();
+          if (Array.isArray(d.users)) {
+            d.users.forEach((u: Presence) => {
+              const em = (u.email || '').toLowerCase().trim();
+              if (em) onlineMap.set(em, { ...u, email: em, status: 'ONLINE' });
+            });
+          }
+          if (Array.isArray(d.offlineUsers)) {
+            d.offlineUsers.forEach((u: Presence) => {
+              const em = (u.email || '').toLowerCase().trim();
+              if (em && !onlineMap.has(em)) offlineMap.set(em, { ...u, email: em, status: 'OFFLINE' });
+            });
+          }
+        }
+      } catch {}
+
+      try {
+        // One-time getDocs poll (NEVER onSnapshot) to include cross-URL sessions
+        const snap = await getDocs(collection(db, 'presence'));
+        snap.forEach((docSnap) => {
+          const d = docSnap.data() as any;
+          const em = (d?.email || '').toLowerCase().trim();
+          if (!em) return;
+          const ts = typeof d?.timestamp?.toMillis === 'function' ? d.timestamp.toMillis() : (Date.parse(d?.lastSeen || '') || 0);
+          const isOnlineCloud = d?.status !== 'OFFLINE' && (now - ts) <= 45 * 1000;
+          const item: Presence = {
+            uid: d.uid || docSnap.id,
+            email: em,
+            displayName: d.displayName || em.split('@')[0],
+            outlet: d.outlet || 'SEMUA OUTLET',
+            photoURL: d.photoURL || '',
+            lastSeen: d.lastSeen || new Date(ts || now).toISOString(),
+            status: isOnlineCloud ? 'ONLINE' : 'OFFLINE',
+            timestamp: ts
+          };
+          if (isOnlineCloud) {
+            offlineMap.delete(em);
+            onlineMap.set(em, item);
+          } else if (!onlineMap.has(em)) {
+            offlineMap.set(em, item);
+          }
+        });
+      } catch {}
+
+      setLoginOnlineUsers(Array.from(onlineMap.values()));
+      setLoginOfflineUsers(Array.from(offlineMap.values()));
+    };
+
+    pingLoginPresence();
+    loadPresence();
+    const pingTimer = setInterval(pingLoginPresence, 5000);
+    const pollTimer = setInterval(loadPresence, 4000);
+    return () => {
+      clearInterval(pingTimer);
+      clearInterval(pollTimer);
+    };
+  }, [activeSessionEmail, selectedOutlet, firebaseUser?.photoURL, firebaseUser?.displayName]);
 
   const handleLoginSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -246,6 +344,64 @@ const LoginModule: React.FC<Props> = ({ onLogin, onPublicView, isFullScreen, onT
             <p className="text-indigo-400 text-[8px] sm:text-[9px] font-black uppercase tracking-[0.4em]">SUPPORT BY CHRISTIAN</p>
           </div>
         </div>
+
+        {/* Online & Offline Users Strip on Login Portal */}
+        {(loginOnlineUsers.length > 0 || loginOfflineUsers.length > 0) && (
+          <div className="mb-4 rounded-2xl bg-slate-950/70 border border-white/10 p-3 text-left">
+            <button
+              type="button"
+              onClick={() => setShowPresencePanel(p => !p)}
+              className="w-full flex items-center justify-between gap-2 cursor-pointer"
+            >
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase text-emerald-400">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                  {loginOnlineUsers.length} Online
+                </span>
+                <span className="text-slate-600">•</span>
+                <span className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase text-slate-400">
+                  <span className="w-2 h-2 rounded-full bg-slate-500"></span>
+                  {loginOfflineUsers.length} Offline
+                </span>
+              </div>
+              <span className="text-[9px] font-bold text-slate-400 uppercase flex items-center gap-1">
+                <span>Pengguna Web</span>
+                <i className={`fas fa-chevron-${showPresencePanel ? 'up' : 'down'} text-[8px]`}></i>
+              </span>
+            </button>
+
+            {showPresencePanel && (
+              <div className="mt-2.5 flex flex-wrap gap-1.5 max-h-28 overflow-y-auto custom-scrollbar">
+                {loginOnlineUsers.map((u, i) => (
+                  <div
+                    key={`lon-${u.email}-${i}`}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-[10px]"
+                    title={`${u.email} (${u.outlet || 'Aktif'})`}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                    <span className="font-black text-white truncate max-w-[110px]">
+                      {u.displayName || u.email.split('@')[0]}
+                    </span>
+                    <span className="text-[8px] font-bold text-emerald-300 uppercase">ON</span>
+                  </div>
+                ))}
+                {loginOfflineUsers.map((u, i) => (
+                  <div
+                    key={`loff-${u.email}-${i}`}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-xl bg-slate-800/80 border border-white/10 text-[10px] opacity-75"
+                    title={`${u.email} (Offline)`}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                    <span className="font-bold text-slate-300 truncate max-w-[110px]">
+                      {u.displayName || u.email.split('@')[0]}
+                    </span>
+                    <span className="text-[8px] font-bold text-slate-400 uppercase">OFF</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Active Session Badge if detected */}
         {activeSessionEmail && (

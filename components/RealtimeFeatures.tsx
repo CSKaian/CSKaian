@@ -24,19 +24,42 @@ interface Props {
   filters?: any;
   onlineUsers?: Presence[];
   setOnlineUsers?: React.Dispatch<React.SetStateAction<Presence[]>>;
+  offlineUsers?: Presence[];
+  isPresenceModalOpen?: boolean;
+  setIsPresenceModalOpen?: React.Dispatch<React.SetStateAction<boolean>>;
 }
+
+const formatOfflineAgo = (iso?: string) => {
+  if (!iso) return 'Offline';
+  const diffSec = Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 1000));
+  if (isNaN(diffSec) || diffSec < 60) return 'Baru saja keluar';
+  const mins = Math.floor(diffSec / 60);
+  if (mins < 60) return `${mins} menit lalu`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} jam lalu`;
+  const days = Math.floor(hrs / 24);
+  return `${days} hari lalu`;
+};
 
 const RealtimeFeatures: React.FC<Props> = ({ 
   user, isAdmin, globalData, outletMonthlyData, filters,
   onlineUsers: propOnlineUsers,
-  setOnlineUsers: propSetOnlineUsers
+  setOnlineUsers: propSetOnlineUsers,
+  offlineUsers: propOfflineUsers,
+  isPresenceModalOpen,
+  setIsPresenceModalOpen
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [localOnlineUsers, setLocalOnlineUsers] = useState<Presence[]>([]);
+  const [localOfflineUsers, setLocalOfflineUsers] = useState<Presence[]>([]);
   const onlineUsers = propOnlineUsers || localOnlineUsers;
   const setOnlineUsers = propSetOnlineUsers || setLocalOnlineUsers;
+  const offlineUsers = propOfflineUsers || localOfflineUsers;
   const [isChatOpen, setIsChatOpen] = useState(false);
-  const [showOnlineModal, setShowOnlineModal] = useState(false);
+  const [localShowOnlineModal, setLocalShowOnlineModal] = useState(false);
+  const showOnlineModal = isPresenceModalOpen !== undefined ? isPresenceModalOpen : localShowOnlineModal;
+  const setShowOnlineModal = setIsPresenceModalOpen || setLocalShowOnlineModal;
+  const [presenceTab, setPresenceTab] = useState<'ALL' | 'ONLINE' | 'OFFLINE'>('ALL');
   const [newMessage, setNewMessage] = useState('');
   const chatEndRef = useRef<HTMLDivElement>(null);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -284,7 +307,7 @@ const RealtimeFeatures: React.FC<Props> = ({
     } catch (e) {}
   }, [auth.currentUser]);
 
-  // Synchronize presence only via fast server API (zero Firestore snapshot / getDocs / setDoc quota)
+  // Synchronize presence only via fast server API (zero Firestore snapshot)
   useEffect(() => {
     // If parent App.tsx already provides live onlineUsers, no redundant polling needed
     if (propOnlineUsers) return;
@@ -298,12 +321,15 @@ const RealtimeFeatures: React.FC<Props> = ({
           if (Array.isArray(data.users)) {
             setOnlineUsers(data.users as Presence[]);
           }
+          if (Array.isArray(data.offlineUsers)) {
+            setLocalOfflineUsers(data.offlineUsers as Presence[]);
+          }
         }
       } catch (e) {}
     };
 
     fetchOnlineUsers();
-    const interval = setInterval(fetchOnlineUsers, 2500); // Poll server every 2.5s (zero Firestore cost)
+    const interval = setInterval(fetchOnlineUsers, 2500);
     return () => clearInterval(interval);
   }, [user.email, propOnlineUsers]);
 
@@ -384,32 +410,34 @@ const RealtimeFeatures: React.FC<Props> = ({
 
   return (
     <>
-      {/* Online Users Floating Status - Clean Real-time Firebase Indicator with User Avatars */}
+      {/* Online & Offline Users Floating Status */}
       <div className="fixed bottom-6 left-6 z-[100] flex flex-col gap-2 pointer-events-none">
         <AnimatePresence>
-          {onlineUsers.length > 0 && (
+          {(onlineUsers.length > 0 || offlineUsers.length > 0) && (
             <motion.div
               initial={{ opacity: 0, x: -25, y: 5 }}
               animate={{ opacity: 1, x: 0, y: 0 }}
               exit={{ opacity: 0, x: -25, y: 5 }}
               onClick={() => setShowOnlineModal(true)}
               className="pointer-events-auto glass-card p-2 px-3.5 rounded-2xl flex items-center gap-3 border border-emerald-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.5)] bg-slate-900/95 group text-left cursor-pointer hover:border-emerald-400/60 hover:bg-slate-900 transition-all active:scale-95"
-              title="Klik untuk melihat semua user online"
+              title="Klik untuk melihat semua user Online & Offline"
             >
-              {/* Online Connection Status with Avatar Bubbles */}
+              {/* Online + Offline Counter with Avatar Bubbles */}
               <div className="flex items-center gap-2.5 pr-2.5 border-r border-white/10 shrink-0">
                 <div className="relative">
                   <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-ping absolute inset-0"></div>
                   <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full relative"></div>
                 </div>
 
-                {/* Overlapping User Google Profile Avatars */}
+                {/* Overlapping User Avatars */}
                 <div className="flex -space-x-2 overflow-hidden py-0.5">
-                  {onlineUsers.slice(0, 4).map((u, i) => (
+                  {[...onlineUsers, ...offlineUsers].slice(0, 4).map((u, i) => (
                     <div 
-                      key={u.uid || i} 
-                      className="w-6 h-6 rounded-full overflow-hidden border-2 border-slate-900 bg-indigo-600 flex items-center justify-center text-[8px] font-black text-white shrink-0 shadow-sm"
-                      title={`${u.displayName || u.email} (${u.outlet || 'Aktif'})`}
+                      key={u.uid || u.email || i} 
+                      className={`w-6 h-6 rounded-full overflow-hidden border-2 border-slate-900 flex items-center justify-center text-[8px] font-black text-white shrink-0 shadow-sm ${
+                        u.status === 'OFFLINE' ? 'bg-slate-700 grayscale opacity-75' : 'bg-indigo-600'
+                      }`}
+                      title={`${u.displayName || u.email} (${u.status === 'OFFLINE' ? 'Offline' : 'Online'})`}
                     >
                       {u.photoURL ? (
                         <img 
@@ -426,51 +454,35 @@ const RealtimeFeatures: React.FC<Props> = ({
                       )}
                     </div>
                   ))}
-                  {onlineUsers.length > 4 && (
+                  {onlineUsers.length + offlineUsers.length > 4 && (
                     <div className="w-6 h-6 rounded-full border-2 border-slate-900 bg-slate-800 text-[8px] font-bold text-slate-300 flex items-center justify-center shrink-0">
-                      +{onlineUsers.length - 4}
+                      +{onlineUsers.length + offlineUsers.length - 4}
                     </div>
                   )}
                 </div>
 
                 <div className="flex flex-col">
-                  <div className="text-[9px] font-black text-emerald-400 uppercase tracking-wider leading-none flex items-center gap-1">
-                    <span>{onlineUsers.length} Online</span>
+                  <div className="text-[9px] font-black uppercase tracking-wider leading-none flex items-center gap-1.5">
+                    <span className="text-emerald-400">{onlineUsers.length} Online</span>
+                    <span className="text-slate-500">•</span>
+                    <span className="text-slate-300">{offlineUsers.length} Offline</span>
                     <i className="fas fa-chevron-up text-[7px] text-slate-400 group-hover:text-emerald-400 transition-colors"></i>
                   </div>
                   <span className="text-[7px] text-slate-400 font-bold uppercase tracking-tighter mt-0.5">
-                    Lihat Semua User
+                    Lihat User Online & Offline
                   </span>
                 </div>
               </div>
 
-              {/* Realtime Other Users Display with Photo and Name */}
+              {/* Quick Chips */}
               {otherOnlineUsers.length > 0 ? (
-                <div className="flex items-center gap-1.5 pl-2 border-l border-white/10 shrink-0">
-                  <span className="text-[8px] font-black text-slate-400 uppercase hidden sm:inline">Online:</span>
+                <div className="hidden sm:flex items-center gap-1.5 pl-1 shrink-0">
                   {otherOnlineUsers.slice(0, 2).map((otherUser, idx) => (
                     <div 
                       key={otherUser.uid || otherUser.email || idx}
-                      className="flex items-center gap-1.5 bg-slate-800/90 hover:bg-slate-700/90 px-2 py-1 rounded-xl border border-white/10 shrink-0 transition-colors shadow-sm"
-                      title={`${otherUser.displayName || otherUser.email} di ${otherUser.outlet || 'Sistem'}`}
+                      className="flex items-center gap-1.5 bg-slate-800/90 px-2 py-1 rounded-xl border border-emerald-500/20 shrink-0"
                     >
-                      <div className="w-5 h-5 rounded-full overflow-hidden bg-indigo-600 shrink-0 border border-white/20">
-                        {otherUser.photoURL ? (
-                          <img 
-                            src={otherUser.photoURL} 
-                            alt={otherUser.displayName || otherUser.email} 
-                            className="w-full h-full object-cover" 
-                            referrerPolicy="no-referrer"
-                            onError={(e) => {
-                              (e.currentTarget as HTMLImageElement).style.display = 'none';
-                            }}
-                          />
-                        ) : (
-                          <span className="text-[7px] font-black text-white flex items-center justify-center h-full">
-                            {(otherUser.displayName || otherUser.email || 'U').charAt(0).toUpperCase()}
-                          </span>
-                        )}
-                      </div>
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
                       <span className="text-[9px] font-black text-white truncate max-w-[80px]">
                         {otherUser.displayName || (otherUser.email || '').split('@')[0]}
                       </span>
@@ -478,21 +490,15 @@ const RealtimeFeatures: React.FC<Props> = ({
                   ))}
                   {otherOnlineUsers.length > 2 && (
                     <span className="text-[8px] font-black text-emerald-400 px-1.5 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-                      +{otherOnlineUsers.length - 2} lagi
+                      +{otherOnlineUsers.length - 2}
                     </span>
                   )}
                 </div>
               ) : (
-                <div className="flex items-center gap-2 shrink-0">
-                  <i className="fas fa-database text-[10px] text-indigo-400"></i>
-                  <div className="flex flex-col">
-                    <div className="text-[9px] font-black uppercase tracking-wider text-indigo-400 leading-none">
-                      Firebase Terhubung
-                    </div>
-                    <span className="text-[7px] text-slate-400 font-bold uppercase tracking-tighter mt-0.5">
-                      Input & Lihat Data Aktif
-                    </span>
-                  </div>
+                <div className="hidden sm:flex items-center gap-1.5 shrink-0">
+                  <span className="text-[8px] font-black uppercase tracking-wider text-indigo-300">
+                    {offlineUsers.length > 0 ? `${offlineUsers.length} Terakhir Offline` : 'Status Aktif'}
+                  </span>
                 </div>
               )}
             </motion.div>
@@ -631,7 +637,7 @@ const RealtimeFeatures: React.FC<Props> = ({
         )}
       </AnimatePresence>
 
-      {/* Modal: Daftar Semua Pengguna Online dengan Foto Profil Google */}
+      {/* Modal: Daftar Semua Pengguna Online & Offline */}
       <AnimatePresence>
         {showOnlineModal && (
           <div className="fixed inset-0 z-[150] flex items-center justify-center p-4">
@@ -655,10 +661,14 @@ const RealtimeFeatures: React.FC<Props> = ({
                     <i className="fas fa-users text-sm"></i>
                   </div>
                   <div>
-                    <h3 className="text-sm font-black text-white uppercase tracking-wider">Pengguna Online</h3>
-                    <p className="text-[10px] text-emerald-400 font-bold uppercase tracking-tight flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-                      {onlineUsers.length} User Terhubung Realtime
+                    <h3 className="text-sm font-black text-white uppercase tracking-wider">Pengguna Online & Offline</h3>
+                    <p className="text-[10px] font-bold uppercase tracking-tight flex items-center gap-2 mt-0.5">
+                      <span className="text-emerald-400 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                        {onlineUsers.length} Online
+                      </span>
+                      <span className="text-slate-500">•</span>
+                      <span className="text-slate-400">{offlineUsers.length} Offline</span>
                     </p>
                   </div>
                 </div>
@@ -670,28 +680,68 @@ const RealtimeFeatures: React.FC<Props> = ({
                 </button>
               </div>
 
-              {/* Online Users List */}
+              {/* Tabs Filter */}
+              <div className="px-4 pt-3 pb-2 border-b border-white/5 flex items-center gap-2 bg-slate-950/30">
+                {[
+                  { id: 'ALL', label: `Semua (${onlineUsers.length + offlineUsers.length})` },
+                  { id: 'ONLINE', label: `Online (${onlineUsers.length})` },
+                  { id: 'OFFLINE', label: `Offline (${offlineUsers.length})` }
+                ].map(t => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setPresenceTab(t.id as any)}
+                    className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                      presenceTab === t.id
+                        ? 'bg-emerald-500 text-slate-950 shadow'
+                        : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Users List */}
               <div className="p-4 overflow-y-auto space-y-2.5 custom-scrollbar flex-1">
-                {onlineUsers.length === 0 ? (
-                  <div className="py-12 text-center text-slate-500 text-xs font-bold uppercase">
-                    Tidak ada pengguna aktif terdeteksi
-                  </div>
-                ) : (
-                  onlineUsers.map((u, idx) => {
+                {(() => {
+                  const list =
+                    presenceTab === 'ONLINE'
+                      ? onlineUsers.map(u => ({ ...u, status: 'ONLINE' as const }))
+                      : presenceTab === 'OFFLINE'
+                      ? offlineUsers.map(u => ({ ...u, status: 'OFFLINE' as const }))
+                      : [
+                          ...onlineUsers.map(u => ({ ...u, status: 'ONLINE' as const })),
+                          ...offlineUsers.map(u => ({ ...u, status: 'OFFLINE' as const }))
+                        ];
+
+                  if (list.length === 0) {
+                    return (
+                      <div className="py-12 text-center text-slate-500 text-xs font-bold uppercase">
+                        Belum ada pengguna pada kategori ini
+                      </div>
+                    );
+                  }
+
+                  return list.map((u, idx) => {
+                    const isOffline = u.status === 'OFFLINE';
                     const isCurrentUser = u.email?.toLowerCase() === user.email?.toLowerCase();
                     return (
                       <div
-                        key={u.uid || idx}
+                        key={`${u.status}-${u.uid || u.email || idx}`}
                         className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 ${
-                          isCurrentUser
+                          isOffline
+                            ? 'bg-slate-900/60 border-white/5 opacity-75'
+                            : isCurrentUser
                             ? 'bg-indigo-600/15 border-indigo-500/30 shadow-lg'
-                            : 'bg-slate-800/60 hover:bg-slate-800 border-white/5'
+                            : 'bg-slate-800/70 border-emerald-500/20'
                         }`}
                       >
                         <div className="flex items-center gap-3 min-w-0">
-                          {/* Google Profile Photo */}
                           <div className="relative shrink-0">
-                            <div className="w-11 h-11 rounded-2xl overflow-hidden bg-gradient-to-br from-indigo-500 to-purple-600 border border-white/20 flex items-center justify-center text-white font-black text-sm shadow-md">
+                            <div className={`w-11 h-11 rounded-2xl overflow-hidden border border-white/20 flex items-center justify-center text-white font-black text-sm shadow-md ${
+                              isOffline ? 'bg-slate-700 grayscale' : 'bg-gradient-to-br from-indigo-500 to-purple-600'
+                            }`}>
                               {u.photoURL ? (
                                 <img
                                   src={u.photoURL}
@@ -706,16 +756,17 @@ const RealtimeFeatures: React.FC<Props> = ({
                                 <span>{(u.displayName || u.email || 'U').charAt(0).toUpperCase()}</span>
                               )}
                             </div>
-                            <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 bg-emerald-500 rounded-full border-2 border-slate-900 ring-1 ring-emerald-400"></span>
+                            <span className={`absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full border-2 border-slate-900 ${
+                              isOffline ? 'bg-slate-400' : 'bg-emerald-500 ring-1 ring-emerald-400'
+                            }`}></span>
                           </div>
 
-                          {/* User Details */}
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
                               <p className="text-xs font-black text-white truncate">
                                 {u.displayName || (u.email || '').split('@')[0]}
                               </p>
-                              {isCurrentUser && (
+                              {isCurrentUser && !isOffline && (
                                 <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-400/30">
                                   Anda
                                 </span>
@@ -729,27 +780,38 @@ const RealtimeFeatures: React.FC<Props> = ({
                                 <i className="fas fa-store text-[7px]"></i>
                                 {u.outlet || 'SEMUA OUTLET'}
                               </span>
+                              {isOffline && (
+                                <span className="text-[8px] text-slate-400 font-bold">
+                                  {formatOfflineAgo(u.lastOfflineAt || u.lastSeen)}
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
 
-                        {/* Status Badge */}
                         <div className="shrink-0 text-right">
-                          <span className="inline-flex items-center gap-1 text-[8px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-xl uppercase">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                            Aktif
-                          </span>
+                          {isOffline ? (
+                            <span className="inline-flex items-center gap-1 text-[8px] font-black text-slate-300 bg-slate-800 border border-white/10 px-2 py-1 rounded-xl uppercase">
+                              <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                              Offline
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[8px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-xl uppercase">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                              Online
+                            </span>
+                          )}
                         </div>
                       </div>
                     );
-                  })
-                )}
+                  });
+                })()}
               </div>
 
               {/* Modal Footer */}
               <div className="p-4 bg-slate-950/50 border-t border-white/10 flex items-center justify-between">
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
-                  Real-time Google Profile & Sync
+                  Sinkronisasi Multi-User Real-time
                 </span>
                 <button
                   type="button"

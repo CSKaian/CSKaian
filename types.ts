@@ -907,6 +907,9 @@ export interface Presence {
   uid: string;
   email: string;
   lastSeen: string;
+  lastOfflineAt?: string;
+  status?: 'ONLINE' | 'OFFLINE';
+  timestamp?: number;
   outlet?: string;
   photoURL?: string;
   displayName?: string;
