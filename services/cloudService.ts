@@ -239,6 +239,10 @@ console.error = (...args) => {
     msg.includes('Client is offline') ||
     msg.includes('Failed to get document because the client is offline')
   ) return;
+  if (msg.includes('Could not reach Cloud Firestore')) {
+    originalWarn.apply(console, args);
+    return;
+  }
   originalError.apply(console, args);
 };
 
@@ -554,6 +558,12 @@ export function unpackOutletDocument(docData: any): any {
   if (docData.promoSettings) filledMonthlyData.promoSettings = docData.promoSettings;
   if (docData.bankingPromos) filledMonthlyData.bankingPromos = docData.bankingPromos;
   if (docData.dailyStrategy) filledMonthlyData.dailyStrategy = docData.dailyStrategy;
+  if (docData.dailyVoidBills) filledMonthlyData.dailyVoidBills = docData.dailyVoidBills;
+  if (docData.voidBills) filledMonthlyData.voidBills = docData.voidBills;
+  if (docData.dailyOperationalIssues) filledMonthlyData.dailyOperationalIssues = docData.dailyOperationalIssues;
+  if (docData.operationalIssues) filledMonthlyData.operationalIssues = docData.operationalIssues;
+  if (docData.dailySpk3Records) filledMonthlyData.dailySpk3Records = docData.dailySpk3Records;
+  if (docData.spk3Records) filledMonthlyData.spk3Records = docData.spk3Records;
 
   return filledMonthlyData;
 }

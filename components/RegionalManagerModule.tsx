@@ -33,6 +33,9 @@ import { RegionalPromoRecapTable } from './RegionalPromoRecapTable';
 import { RegionalStrategiMenuRecapTable } from './RegionalStrategiMenuRecapTable';
 import { RegionalCogsRecapTable } from './RegionalCogsRecapTable';
 import RegionalVoidBillRecapTable from './RegionalVoidBillRecapTable';
+import RegionalOperationalIssueRecapTable from './RegionalOperationalIssueRecapTable';
+import RegionalSpk3RecapTable from './RegionalSpk3RecapTable';
+import RegionalOutletReviewTable from './RegionalOutletReviewTable';
 import { buildAggregatedGlobalData } from '../lib/aggregators';
 import { OUTLETS, REGIONAL_AREAS, getAreaForOutlet, QA_PASSING_SCORES, OT_RATE, INITIAL_STATE, ORDER_SCHEDULES_BY_AREA, getOrderScheduleForOutlet, getStoredOtBudgetSettings, getActiveOutletNames, getActiveRegionalAreas, getActiveOutletConfigs } from '../constants';
 import RegionalWaReportModal from './RegionalWaReportModal';
@@ -2903,6 +2906,9 @@ const RegionalManagerModule: React.FC<RMProps> = ({
     { id: 'BANKING_PROMO_REGIONAL', label: 'Rekapan Promo Bank', icon: 'fa-tags', sub: 'Promo Aktif & History Promo' },
     { id: 'STRATEGI_MENU_REGIONAL', label: 'Menu Strategi', icon: 'fa-bullseye', sub: 'Penyeimbang & Percepatan' },
     { id: 'VOID_BILL_REGIONAL', label: 'Rekapan Void Bill', icon: 'fa-ban', sub: 'Akumulasi Kesalahan Staff' },
+    { id: 'OPERATIONAL_ISSUE_REGIONAL', label: 'Operational Issue', icon: 'fa-clipboard-list', sub: 'Summary Kategori & Matriks' },
+    { id: 'SPK3_REGIONAL', label: 'Rekapan SPK3', icon: 'fa-shield-alt', sub: 'Inspeksi, SOS, Grooming & Point' },
+    { id: 'OUTLET_REVIEW', label: 'Outlet Review', icon: 'fa-trophy', sub: 'KPI Terpadu & Ranking Outlet Terbaik' },
   ];
 
   const visibleTabs = useMemo(() => {
@@ -3609,6 +3615,39 @@ const RegionalManagerModule: React.FC<RMProps> = ({
               )}
               {activeTab === 'VOID_BILL_REGIONAL' && (
                 <RegionalVoidBillRecapTable
+                  allOutletsData={allOutletsData}
+                  selectedMonth={selectedMonth}
+                  selectedYear={selectedYear}
+                  selectedArea={selectedArea}
+                  selectedOutlet={selectedOutlet}
+                  onSelectOutlet={setSelectedOutlet}
+                  showToast={showToast}
+                />
+              )}
+              {activeTab === 'OPERATIONAL_ISSUE_REGIONAL' && (
+                <RegionalOperationalIssueRecapTable
+                  allOutletsData={allOutletsData}
+                  selectedMonth={selectedMonth}
+                  selectedYear={selectedYear}
+                  selectedArea={selectedArea}
+                  selectedOutlet={selectedOutlet}
+                  onSelectOutlet={setSelectedOutlet}
+                  showToast={showToast}
+                />
+              )}
+              {activeTab === 'SPK3_REGIONAL' && (
+                <RegionalSpk3RecapTable
+                  allOutletsData={allOutletsData}
+                  selectedMonth={selectedMonth}
+                  selectedYear={selectedYear}
+                  selectedArea={selectedArea}
+                  selectedOutlet={selectedOutlet}
+                  onSelectOutlet={setSelectedOutlet}
+                  showToast={showToast}
+                />
+              )}
+              {activeTab === 'OUTLET_REVIEW' && (
+                <RegionalOutletReviewTable
                   allOutletsData={allOutletsData}
                   selectedMonth={selectedMonth}
                   selectedYear={selectedYear}

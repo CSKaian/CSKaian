@@ -86,6 +86,12 @@ service cloud.firestore {
              && (data.logisticPeriodPrices is map || !data.keys().hasAny(['logisticPeriodPrices']))
              && (data.dailyQA is map || !data.keys().hasAny(['dailyQA']))
              && (data.dailyRecording is map || !data.keys().hasAny(['dailyRecording']))
+             && (data.dailyVoidBills is map || !data.keys().hasAny(['dailyVoidBills']))
+             && (data.voidBills is list || !data.keys().hasAny(['voidBills']))
+             && (data.dailyOperationalIssues is map || !data.keys().hasAny(['dailyOperationalIssues']))
+             && (data.operationalIssues is list || !data.keys().hasAny(['operationalIssues']))
+             && (data.dailySpk3Records is map || !data.keys().hasAny(['dailySpk3Records']))
+             && (data.spk3Records is list || !data.keys().hasAny(['spk3Records']))
              && (data.isDeleted is bool || !data.keys().hasAny(['isDeleted']))
              && data.keys().hasAll(['updatedAt', 'lastUpdatedBy']);
     }
@@ -203,12 +209,6 @@ service cloud.firestore {
       allow get, list: if true;
       allow create: if isValidId(messageId) && (isAdmin() || isValidChatMessage(incoming()));
       allow update: if isAdmin();
-      allow delete: if isAdmin();
-    }
-
-    match /laporan/{docId} {
-      allow get, list: if true;
-      allow create, update: if isValidId(docId);
       allow delete: if isAdmin();
     }
 

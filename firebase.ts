@@ -21,9 +21,11 @@ const firebaseConfig = {
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
 // VERSI IRIT 1000 BROWSER - ANTI LELET
+// Gunakan experimentalForceLongPolling agar koneksi Firestore stabil di iframe/proxy tanpa timeout WebChannel 10 detik
 let firestoreDb: any;
 try {
   firestoreDb = initializeFirestore(app, {
+    experimentalForceLongPolling: true,
     localCache: persistentLocalCache({
       tabManager: persistentMultipleTabManager(),
       cacheSizeBytes: CACHE_SIZE_UNLIMITED
@@ -31,11 +33,12 @@ try {
   });
 } catch {
   try {
-    firestoreDb = getFirestore(app);
-  } catch {
     firestoreDb = initializeFirestore(app, {
+      experimentalForceLongPolling: true,
       localCache: memoryLocalCache()
     });
+  } catch {
+    firestoreDb = getFirestore(app);
   }
 }
 

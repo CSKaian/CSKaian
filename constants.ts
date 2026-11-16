@@ -546,6 +546,10 @@ export const INITIAL_STATE: AppState = {
   logisticPeriodPrices: {},
   dailyVoidBills: {},
   voidBills: [],
+  dailyOperationalIssues: {},
+  operationalIssues: [],
+  dailySpk3Records: {},
+  spk3Records: [],
   customSuppliers: [],
   dailyCustomSupplierLedgers: {},
 };

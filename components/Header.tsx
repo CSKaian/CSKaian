@@ -358,15 +358,6 @@ const Header: React.FC<Props> = ({
           </button>
 
           <button 
-            onClick={() => onModuleSelect(ModuleType.PROJECT_REPORT)}
-            className={`px-2.5 py-1.5 h-9 rounded-xl flex items-center gap-1.5 text-xs font-black transition-all ${activeModule === ModuleType.PROJECT_REPORT ? 'purple-gradient-bg text-white shadow-lg shadow-purple-900/40' : 'bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30'}`}
-            title="CSK Project Report (Irit Kuota)"
-          >
-            <i className="fas fa-clipboard-list text-xs"></i>
-            <span className="hidden sm:inline uppercase text-[9px] tracking-wider">CSK Report</span>
-          </button>
-
-          <button 
             onClick={() => onModuleSelect(ModuleType.TUTORIAL)}
             className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all ${activeModule === ModuleType.TUTORIAL ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/30' : 'bg-white/5 hover:bg-white/10 text-amber-400'}`}
             title="Tutorial & Panduan Penggunaan Aplikasi"

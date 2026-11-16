@@ -56,15 +56,55 @@ export enum ModuleType {
   GMAIL = 'GMAIL',
   STRATEGI = 'STRATEGI',
   VOID_BILL = 'VOID_BILL',
-  PROJECT_REPORT = 'PROJECT_REPORT'
+  OPERATIONAL_ISSUE = 'OPERATIONAL_ISSUE',
+  SPK3 = 'SPK3'
 }
 
-export interface LaporanRecord {
+export type OperationalIssueCategory =
+  | 'Issue Mistery Guest'
+  | 'Guest Comment'
+  | 'Google Review';
+
+export interface OperationalIssueRecord {
   id: string;
-  lokasi: string;
-  pekerjaan: string;
-  progres: string | number;
-  createdAt?: any;
+  outlet: string;
+  date: string; // YYYY-MM-DD
+  category: OperationalIssueCategory;
+  kronologi: string;
+  findingProblem: string;
+  area: string;
+  takenAction: string;
+  corrective: string;
+  pic: string; // Terhubung dengan Tabel Manpower
+  picRole?: string;
+  picDivision?: string;
+  points?: number; // Default 1 point per temuan
+  status?: 'OPEN' | 'IN_PROGRESS' | 'RESOLVED';
+  createdAt?: string;
+  updatedAt?: string;
+  createdBy?: string;
+}
+
+export type Spk3Category =
+  | 'Temuan Inspeksi'
+  | 'Temuan SOS'
+  | 'Temuan Grooming';
+
+export interface Spk3Record {
+  id: string;
+  outlet: string;
+  date: string; // YYYY-MM-DD
+  category: Spk3Category;
+  pelaku: string; // Nama pelaku auto dari Tabel Manpower
+  pelakuRole?: string;
+  pelakuDivision?: string;
+  temuanDetail: string;
+  area?: string;
+  tindakLanjut?: string;
+  deductionPoints?: number; // Default 10 poin pengurang dari skor harian 100
+  createdAt?: string;
+  updatedAt?: string;
+  createdBy?: string;
 }
 
 export interface VoidBillRecord {
@@ -872,6 +912,16 @@ export interface Presence {
   displayName?: string;
 }
 
+export interface PresenceEvent {
+  id: string;
+  type: 'LOGIN' | 'LOGOUT';
+  email: string;
+  displayName?: string;
+  outlet?: string;
+  photoURL?: string;
+  timestamp: number;
+}
+
 export interface ChatMessage {
   id: string;
   text: string;
@@ -1107,6 +1157,10 @@ export interface AppState {
   dailyStrategy?: Record<string, DailyStrategyRecord>;
   dailyVoidBills?: Record<string, VoidBillRecord[]>;
   voidBills?: VoidBillRecord[];
+  dailyOperationalIssues?: Record<string, OperationalIssueRecord[]>;
+  operationalIssues?: OperationalIssueRecord[];
+  dailySpk3Records?: Record<string, Spk3Record[]>;
+  spk3Records?: Spk3Record[];
   customSuppliers?: CustomSupplier[];
   dailyCustomSupplierLedgers?: Record<string, Record<string, LedgerItem[]>>;
 }

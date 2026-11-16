@@ -10,7 +10,6 @@ interface Props {
 const Sidebar: React.FC<Props> = ({ active, onSelect, isAdmin }) => {
   const rootMenuItems = [
     { type: ModuleType.DASHBOARD, label: 'KEMBALI KE BERANDA', icon: 'fa-home', color: 'text-indigo-400' },
-    { type: ModuleType.PROJECT_REPORT, label: 'CSK PROJECT REPORT', icon: 'fa-clipboard-list', color: 'text-purple-400' },
   ];
 
   const outletMenuItems = [
@@ -31,6 +30,8 @@ const Sidebar: React.FC<Props> = ({ active, onSelect, isAdmin }) => {
     { type: ModuleType.COMPLIMENTARY, label: 'Complimentary', icon: 'fa-gift', color: 'text-purple-400' },
     { type: ModuleType.STRATEGI, label: 'Menu Strategi', icon: 'fa-bullseye', color: 'text-amber-400' },
     { type: ModuleType.VOID_BILL, label: 'Void Bill Monitoring', icon: 'fa-ban', color: 'text-rose-400' },
+    { type: ModuleType.OPERATIONAL_ISSUE, label: 'Operational Issue', icon: 'fa-clipboard-list', color: 'text-orange-400' },
+    { type: ModuleType.SPK3, label: 'SPK3 Monitoring', icon: 'fa-shield-alt', color: 'text-amber-400' },
     { type: ModuleType.TUTORIAL, label: 'Tutorial & SOP', icon: 'fa-graduation-cap', color: 'text-amber-400' },
   ];
 
@@ -106,6 +107,9 @@ const Sidebar: React.FC<Props> = ({ active, onSelect, isAdmin }) => {
                 { type: ModuleType.REGIONAL_REPORT, label: 'Menu Strategi', icon: 'fa-bullseye', tab: 'STRATEGI_MENU_REGIONAL', color: 'text-amber-400' },
                 { type: ModuleType.REGIONAL_REPORT, label: 'Rekapan Promo Bank', icon: 'fa-tags', tab: 'BANKING_PROMO_REGIONAL', color: 'text-purple-400' },
                 { type: ModuleType.REGIONAL_REPORT, label: 'Rekapan Void Bill', icon: 'fa-ban', tab: 'VOID_BILL_REGIONAL', color: 'text-rose-400' },
+                { type: ModuleType.REGIONAL_REPORT, label: 'Rekap Operational Issue', icon: 'fa-clipboard-list', tab: 'OPERATIONAL_ISSUE_REGIONAL', color: 'text-orange-400' },
+                { type: ModuleType.REGIONAL_REPORT, label: 'Rekapan SPK3', icon: 'fa-shield-alt', tab: 'SPK3_REGIONAL', color: 'text-amber-400' },
+                { type: ModuleType.REGIONAL_REPORT, label: 'Outlet Review', icon: 'fa-trophy', tab: 'OUTLET_REVIEW', color: 'text-yellow-400' },
               ].map((sub, idx) => (
                 <button
                   key={idx}

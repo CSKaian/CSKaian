@@ -10,7 +10,6 @@ interface Props {
 
 const Dashboard: React.FC<Props> = ({ onSelect, isAdmin, onToggleFS, onOpenLogisticsInput }) => {
   const cards = [
-    { type: ModuleType.PROJECT_REPORT, label: 'CSK Project Report', icon: 'fa-clipboard-list', color: 'from-purple-600 to-indigo-800', desc: 'Laporan Pekerjaan Lapangan, Progres Harian & Irit Kuota' },
     { type: ModuleType.SALES, label: 'Daily Revenue', icon: 'fa-cash-register', color: 'from-emerald-600 to-teal-800', desc: 'Revenue, Covers & Avg Check' },
     { type: ModuleType.RECEIVING_SHEET, label: 'Receiving Sheet', icon: 'fa-file-invoice-dollar', color: 'from-amber-500 to-yellow-600', desc: 'Laporan Belanja & Cost Supplier Harian' },
     { type: ModuleType.PATTY_CASH_EXPENSE, label: 'Patty Cash Expense', icon: 'fa-wallet', color: 'from-amber-500 to-orange-600', desc: 'Belanja Patty Cash & Matrix Detail Item' },
@@ -28,6 +27,8 @@ const Dashboard: React.FC<Props> = ({ onSelect, isAdmin, onToggleFS, onOpenLogis
     { type: ModuleType.LOGISTICS, label: 'Rekapan Logistik', icon: 'fa-boxes', color: 'from-amber-500 to-orange-600', desc: 'Inventory & Peminjaman Barang' },
     { type: ModuleType.EXTERNAL_AUDIT, label: 'Third Party & Gas', icon: 'fa-gas-pump', color: 'from-amber-600 to-orange-700', desc: 'Penginputan & Rekapan Belanja Third Party & Gas' },
     { type: ModuleType.VOID_BILL, label: 'Void Bill Monitoring', icon: 'fa-ban', color: 'from-rose-600 to-red-800', desc: 'Pencatatan Kesalahan Void Staff & Otorisasi PIC' },
+    { type: ModuleType.OPERATIONAL_ISSUE, label: 'Operational Issue', icon: 'fa-clipboard-list', color: 'from-orange-500 to-rose-700', desc: 'Mistery Guest, Guest Comment, Google Review & PIC' },
+    { type: ModuleType.SPK3, label: 'SPK3 Monitoring', icon: 'fa-shield-alt', color: 'from-amber-500 to-orange-700', desc: 'Inspeksi, SOS, Grooming & Point Performance' },
     { type: ModuleType.TUTORIAL, label: 'Tutorial & SOP', icon: 'fa-graduation-cap', color: 'from-blue-600 to-indigo-800', desc: 'Panduan Operasional Leader, Cashier & Store Keeper' },
   ];
 

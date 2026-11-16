@@ -166,7 +166,83 @@ async function startServer() {
   });
 
   // In-memory active presence tracker (tanpa snapshot, zero Firestore read/write quota!)
-  const activePresenceUsers = new Map<string, { uid: string; email: string; outlet: string; lastSeen: string; timestamp: number; photoURL?: string; displayName?: string }>();
+  interface ServerPresenceEntry {
+    uid: string;
+    email: string;
+    outlet: string;
+    lastSeen: string;
+    timestamp: number;
+    photoURL?: string;
+    displayName?: string;
+  }
+
+  interface ServerPresenceEvent {
+    id: string;
+    type: 'LOGIN' | 'LOGOUT';
+    email: string;
+    displayName: string;
+    outlet: string;
+    photoURL?: string;
+    timestamp: number;
+  }
+
+  const activePresenceUsers = new Map<string, ServerPresenceEntry>();
+  const presenceEvents: ServerPresenceEvent[] = [];
+  let presenceEventSeq = 0;
+
+  const pushPresenceEvent = (
+    type: 'LOGIN' | 'LOGOUT',
+    entry: { email: string; displayName?: string; outlet?: string; photoURL?: string },
+    now: number
+  ) => {
+    const cleanEmail = (entry.email || '').toLowerCase().trim();
+    if (!cleanEmail) return;
+    presenceEventSeq += 1;
+    presenceEvents.push({
+      id: `${type}_${cleanEmail}_${now}_${presenceEventSeq}`,
+      type,
+      email: cleanEmail,
+      displayName: entry.displayName || cleanEmail.split('@')[0],
+      outlet: entry.outlet || 'SEMUA OUTLET',
+      photoURL: entry.photoURL || '',
+      timestamp: now
+    });
+    const eventCutoff = now - 3 * 60 * 1000;
+    while (presenceEvents.length > 60 || (presenceEvents.length > 0 && presenceEvents[0].timestamp < eventCutoff)) {
+      presenceEvents.shift();
+    }
+  };
+
+  const hasActiveEmailSession = (cleanEmail: string): boolean => {
+    let found = false;
+    activePresenceUsers.forEach((u) => {
+      if ((u.email || '').toLowerCase().trim() === cleanEmail) {
+        found = true;
+      }
+    });
+    return found;
+  };
+
+  const pruneExpiredPresence = (now: number) => {
+    const cutoff = now - 15 * 1000;
+    const expiredByEmail = new Map<string, ServerPresenceEntry>();
+
+    activePresenceUsers.forEach((user, key) => {
+      if (user.timestamp <= cutoff) {
+        const cleanEmail = (user.email || '').toLowerCase().trim();
+        if (cleanEmail) {
+          expiredByEmail.set(cleanEmail, user);
+        }
+        activePresenceUsers.delete(key);
+      }
+    });
+
+    expiredByEmail.forEach((lastEntry, cleanEmail) => {
+      if (!hasActiveEmailSession(cleanEmail)) {
+        pushPresenceEvent('LOGOUT', lastEntry, now);
+      }
+    });
+  };
 
   app.post("/api/presence", (req, res) => {
     try {
@@ -174,19 +250,27 @@ async function startServer() {
       if (typeof body === 'string') {
         try { body = JSON.parse(body); } catch {}
       }
+      const now = Date.now();
+      pruneExpiredPresence(now);
+
       const { uid, email, outlet, photoURL, displayName } = body;
       const cleanEmail = (email || '').toLowerCase().trim();
       const key = uid || cleanEmail || 'anonymous';
       if (key && cleanEmail) {
-        activePresenceUsers.set(key, {
+        const alreadyOnline = hasActiveEmailSession(cleanEmail);
+        const entry: ServerPresenceEntry = {
           uid: key,
           email: cleanEmail,
           outlet: outlet || 'SEMUA OUTLET',
           photoURL: photoURL || '',
           displayName: displayName || (cleanEmail ? cleanEmail.split('@')[0] : 'User'),
-          lastSeen: new Date().toISOString(),
-          timestamp: Date.now()
-        });
+          lastSeen: new Date(now).toISOString(),
+          timestamp: now
+        };
+        activePresenceUsers.set(key, entry);
+        if (!alreadyOnline) {
+          pushPresenceEvent('LOGIN', entry, now);
+        }
       }
       res.json({ success: true });
     } catch {
@@ -201,23 +285,39 @@ async function startServer() {
       if (typeof body === 'string') {
         try { body = JSON.parse(body); } catch {}
       }
+      const now = Date.now();
+      pruneExpiredPresence(now);
+
       const query = req.query || {};
       const targetEmail = (body.email || query.email || '').toLowerCase().trim();
       const targetUid = (body.uid || query.uid || '').trim();
+      const logoutAll = body.logoutAll === true || query.logoutAll === 'true';
 
       const keysToDelete: string[] = [];
+      const removedByEmail = new Map<string, ServerPresenceEntry>();
+
       activePresenceUsers.forEach((user, key) => {
         const uEmail = (user.email || '').toLowerCase().trim();
         const uUid = (user.uid || '').trim();
-        if (
-          (targetUid && (key === targetUid || uUid === targetUid || key.startsWith(targetUid) || (uEmail && targetUid.includes(uEmail)))) ||
-          (targetEmail && (uEmail === targetEmail || key.includes(targetEmail)))
-        ) {
+        const matchesUid = Boolean(targetUid && (key === targetUid || uUid === targetUid || key.startsWith(targetUid)));
+        const matchesEmail = Boolean(targetEmail && (uEmail === targetEmail || key.includes(targetEmail)));
+
+        if ((!targetUid || logoutAll) ? (matchesUid || matchesEmail) : matchesUid) {
           keysToDelete.push(key);
+          if (uEmail) {
+            removedByEmail.set(uEmail, user);
+          }
         }
       });
 
       keysToDelete.forEach(k => activePresenceUsers.delete(k));
+
+      removedByEmail.forEach((removedEntry, cleanEmail) => {
+        if (!hasActiveEmailSession(cleanEmail)) {
+          pushPresenceEvent('LOGOUT', removedEntry, now);
+        }
+      });
+
       res.json({ success: true, removedCount: keysToDelete.length, remaining: activePresenceUsers.size });
     } catch {
       res.status(500).json({ error: "Failed to clear presence" });
@@ -231,23 +331,23 @@ async function startServer() {
   app.get("/api/presence", (_req, res) => {
     try {
       const now = Date.now();
-      // Cutoff cepat 15 detik untuk user yang menutup tab/aplikasi
-      const cutoff = now - 15 * 1000;
-      const activeList: any[] = [];
+      pruneExpiredPresence(now);
+
+      const activeList: ServerPresenceEntry[] = [];
       const seenEmails = new Set<string>();
 
       activePresenceUsers.forEach((user, key) => {
-        if (user.timestamp > cutoff) {
-          const emailKey = (user.email || key).toLowerCase().trim();
-          if (!seenEmails.has(emailKey)) {
-            seenEmails.add(emailKey);
-            activeList.push(user);
-          }
-        } else {
-          activePresenceUsers.delete(key);
+        const emailKey = (user.email || key).toLowerCase().trim();
+        if (!seenEmails.has(emailKey)) {
+          seenEmails.add(emailKey);
+          activeList.push(user);
         }
       });
-      res.json({ success: true, users: activeList });
+
+      const eventCutoff = now - 2 * 60 * 1000;
+      const recentEvents = presenceEvents.filter(ev => ev.timestamp >= eventCutoff);
+
+      res.json({ success: true, users: activeList, events: recentEvents });
     } catch {
       res.status(500).json({ error: "Failed to get presence" });
     }
@@ -321,6 +421,7 @@ async function startServer() {
           'manpowerData', 'logisticItems', 'logisticBeginningStocks', 'dailyLogisticRecords',
           'peminjamanRecords', 'logisticPeriodPrices', 'monthlyCogsData', 'customSuppliers',
           'promoSettings', 'bankingPromos', 'dailyStrategy', 'dailyVoidBills',
+          'dailyOperationalIssues', 'operationalIssues', 'dailySpk3Records', 'spk3Records',
           'dailyComplimentaryLedger', 'dailyGuestSatisfaction', 'dailyCityLedger',
           'dailyGasLedger', 'dailyChemicalLedger', 'dailyCommodityLedger',
           'dailyMainStoreLedger', 'dailyMainKitchenLedger', 'dailyCashLedger',

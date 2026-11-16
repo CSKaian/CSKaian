@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { ModuleType, AppState, User, SyncStatus, Outlet, Notification, LeaveRecord, CustomSupplier, Presence } from './types';
+import { ModuleType, AppState, User, SyncStatus, Outlet, Notification, LeaveRecord, CustomSupplier, Presence, PresenceEvent } from './types';
 import { INITIAL_STATE, ROLES_BY_DIVISION, DIVISIONS, OUTLETS, getActiveOutletNames, getStoredCustomSuppliers } from './constants';
 import { fetchUserData, saveGlobalData, saveOutletData, startRealtimeListener, startNotificationListener, isQuotaExceeded, resetQuotaExceeded, fetchAllOutletsData, startAllOutletsListener, testConnection } from './services/cloudService';
 import { safeStorage, safeClipboard, safeWindow } from './lib/safeStorage';
@@ -40,6 +40,9 @@ import RealtimeFeatures from './components/RealtimeFeatures';
 import DailyReminderPopup from './components/DailyReminderPopup';
 import { OutletControlModal } from './components/OutletControlModal';
 import VoidBillModule from './components/VoidBillModule';
+import OperationalIssueModule from './components/OperationalIssueModule';
+import Spk3Module from './components/Spk3Module';
+import PresencePopupStack from './components/PresencePopupStack';
 
 const sortStaffList = (a: any, b: any) => {
   if (a.status === 'ACTIVE' && b.status !== 'ACTIVE') return -1;
@@ -184,11 +187,47 @@ const App: React.FC = () => {
   const [birthdayNotifications, setBirthdayNotifications] = useState<Notification[]>([]);
   const [allOutletsData, setAllOutletsData] = useState<Record<string, any>>({});
   const [onlineUsers, setOnlineUsers] = useState<Presence[]>([]);
+  const [presencePopups, setPresencePopups] = useState<PresenceEvent[]>([]);
   const [isAllOutletsLoading, setIsAllOutletsLoading] = useState(false);
+
+  const seenPresenceEventIdsRef = useRef<Set<string>>(new Set());
+  const hasInitializedPresenceRef = useRef<boolean>(false);
+  const prevOtherUsersMapRef = useRef<Map<string, Presence>>(new Map());
+  const lastPopupByTypeEmailRef = useRef<Map<string, number>>(new Map());
+  const presencePopupTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  const dismissPresencePopup = useCallback((id: string) => {
+    const existingTimer = presencePopupTimersRef.current.get(id);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      presencePopupTimersRef.current.delete(id);
+    }
+    setPresencePopups(prev => prev.filter(p => p.id !== id));
+  }, []);
+
+  const enqueuePresencePopups = useCallback((eventsToShow: PresenceEvent[]) => {
+    if (!eventsToShow || eventsToShow.length === 0) return;
+
+    setPresencePopups(prev => {
+      const merged = [...prev, ...eventsToShow];
+      return merged.slice(-4);
+    });
+
+    eventsToShow.forEach((ev) => {
+      const timer = setTimeout(() => {
+        presencePopupTimersRef.current.delete(ev.id);
+        setPresencePopups(prev => prev.filter(p => p.id !== ev.id));
+      }, 6500);
+      presencePopupTimersRef.current.set(ev.id, timer);
+    });
+  }, []);
 
   const [activeModule, setActiveModule] = useState<ModuleType>(() => {
     const saved = safeStorage.getItem('BARN_ACTIVE_MODULE');
-    return (saved as ModuleType) || ModuleType.REGIONAL_REPORT;
+    if (saved && Object.values(ModuleType).includes(saved as ModuleType)) {
+      return saved as ModuleType;
+    }
+    return ModuleType.REGIONAL_REPORT;
   });
   const [activeRMTab, setActiveRMTab] = useState<any>(() => {
     return safeStorage.getItem('BARN_ACTIVE_RM_TAB') || 'REVENUE_MTD';
@@ -427,7 +466,7 @@ const App: React.FC = () => {
 
   // Realtime Presence Tracker for Concurrent Active Users (Server-driven, Tanpa Firestore Snapshots / Zero Quota)
   useEffect(() => {
-    if (!user.email) return;
+    if (!(user.isLoggedIn && user.email) && !isPublicView) return;
 
     let tabSessionId = sessionStorage.getItem('SH_TAB_SESSION_ID');
     if (!tabSessionId) {
@@ -435,13 +474,15 @@ const App: React.FC = () => {
       sessionStorage.setItem('SH_TAB_SESSION_ID', tabSessionId);
     }
 
-    const uid = auth.currentUser?.uid || user.email.toLowerCase();
+    const myEmail = (user.email || '').toLowerCase().trim();
+    const uid = auth.currentUser?.uid || myEmail || 'viewer';
     const presenceKey = `${uid}_${tabSessionId}`;
 
     const userPhoto = user.photoURL || auth.currentUser?.photoURL || safeStorage.getItem('BARN_USER_PHOTO') || '';
     const userDisplayName = user.displayName || auth.currentUser?.displayName || safeStorage.getItem('BARN_USER_NAME') || (user.email ? user.email.split('@')[0] : 'User');
 
     const sendHeartbeat = async () => {
+      if (!(user.isLoggedIn && user.email)) return;
       try {
         await fetch('/api/presence', {
           method: 'POST',
@@ -457,17 +498,106 @@ const App: React.FC = () => {
       } catch (e) {}
     };
 
-    sendHeartbeat();
-    const heartbeatTimer = setInterval(sendHeartbeat, 6000); // 6s heartbeat
+    let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+    if (user.isLoggedIn && user.email) {
+      sendHeartbeat();
+      heartbeatTimer = setInterval(sendHeartbeat, 6000); // 6s heartbeat
+    }
 
     const fetchPresence = async () => {
       try {
         const res = await fetch('/api/presence');
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data.users)) {
-            setOnlineUsers(data.users);
+        if (!res.ok) return;
+        const data = await res.json();
+        const usersList: Presence[] = Array.isArray(data.users) ? data.users : [];
+        const serverEvents: PresenceEvent[] = Array.isArray(data.events) ? data.events : [];
+
+        setOnlineUsers(usersList);
+
+        const now = Date.now();
+        const otherUsersMap = new Map<string, Presence>();
+        usersList.forEach((u) => {
+          const uEmail = (u.email || '').toLowerCase().trim();
+          if (uEmail && uEmail !== myEmail) {
+            otherUsersMap.set(uEmail, u);
           }
+        });
+
+        const popupsToPush: PresenceEvent[] = [];
+        const tryPushPopup = (ev: PresenceEvent) => {
+          const evEmail = (ev.email || '').toLowerCase().trim();
+          if (!evEmail || evEmail === myEmail) return;
+          const dedupeKey = `${ev.type}_${evEmail}`;
+          const lastShown = lastPopupByTypeEmailRef.current.get(dedupeKey) || 0;
+          if (now - lastShown < 4000) return;
+          lastPopupByTypeEmailRef.current.set(dedupeKey, now);
+          popupsToPush.push({
+            ...ev,
+            email: evEmail
+          });
+        };
+
+        if (!hasInitializedPresenceRef.current) {
+          // On initial poll, skip stale events older than 6 seconds so old history doesn't spam,
+          // while capturing anyone who just logged in or logged out within the last 6 seconds.
+          serverEvents.forEach((ev) => {
+            if (now - ev.timestamp > 6000) {
+              seenPresenceEventIdsRef.current.add(ev.id);
+            } else if (!seenPresenceEventIdsRef.current.has(ev.id)) {
+              seenPresenceEventIdsRef.current.add(ev.id);
+              tryPushPopup(ev);
+            }
+          });
+          prevOtherUsersMapRef.current = otherUsersMap;
+          hasInitializedPresenceRef.current = true;
+        } else {
+          // 1. Process authoritative server LOGIN/LOGOUT events
+          serverEvents.forEach((ev) => {
+            if (!seenPresenceEventIdsRef.current.has(ev.id)) {
+              seenPresenceEventIdsRef.current.add(ev.id);
+              tryPushPopup(ev);
+            }
+          });
+
+          // 2. Client-side transition fallback (handles edge cases like server restart)
+          otherUsersMap.forEach((currUser, uEmail) => {
+            if (!prevOtherUsersMapRef.current.has(uEmail)) {
+              tryPushPopup({
+                id: `LOGIN_DIFF_${uEmail}_${now}`,
+                type: 'LOGIN',
+                email: uEmail,
+                displayName: currUser.displayName || uEmail.split('@')[0],
+                outlet: currUser.outlet || 'SEMUA OUTLET',
+                photoURL: currUser.photoURL || '',
+                timestamp: now
+              });
+            }
+          });
+
+          prevOtherUsersMapRef.current.forEach((prevUser, uEmail) => {
+            if (!otherUsersMap.has(uEmail)) {
+              tryPushPopup({
+                id: `LOGOUT_DIFF_${uEmail}_${now}`,
+                type: 'LOGOUT',
+                email: uEmail,
+                displayName: prevUser.displayName || uEmail.split('@')[0],
+                outlet: prevUser.outlet || 'SEMUA OUTLET',
+                photoURL: prevUser.photoURL || '',
+                timestamp: now
+              });
+            }
+          });
+
+          prevOtherUsersMapRef.current = otherUsersMap;
+        }
+
+        if (seenPresenceEventIdsRef.current.size > 200) {
+          const recentIds = new Set(serverEvents.map(e => e.id));
+          seenPresenceEventIdsRef.current = recentIds;
+        }
+
+        if (popupsToPush.length > 0) {
+          enqueuePresencePopups(popupsToPush);
         }
       } catch {}
     };
@@ -476,6 +606,7 @@ const App: React.FC = () => {
     const pollTimer = setInterval(fetchPresence, 2000); // 2s fast poll for immediate sync across all users
 
     const handleUnload = () => {
+      if (!(user.isLoggedIn && user.email)) return;
       const payload = JSON.stringify({ uid: presenceKey, email: user.email });
       if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
         try {
@@ -496,12 +627,12 @@ const App: React.FC = () => {
     window.addEventListener('pagehide', handleUnload);
 
     return () => {
-      clearInterval(heartbeatTimer);
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
       clearInterval(pollTimer);
       window.removeEventListener('beforeunload', handleUnload);
       window.removeEventListener('pagehide', handleUnload);
     };
-  }, [user.email, user.selectedOutlet, user.photoURL, user.displayName, auth.currentUser?.uid]);
+  }, [user.isLoggedIn, user.email, user.selectedOutlet, user.photoURL, user.displayName, auth.currentUser?.uid, isPublicView, enqueuePresencePopups]);
   
   useEffect(() => {
     if (!globalData.staffList) return;
@@ -855,6 +986,10 @@ const App: React.FC = () => {
           manpowerData: rawMVal.manpowerData || globalData.manpowerData || currentData.manpowerData,
           dailyVoidBills: rawMVal.dailyVoidBills || activeOutletData[mKey]?.dailyVoidBills || {},
           voidBills: rawMVal.voidBills || activeOutletData[mKey]?.voidBills || [],
+          dailyOperationalIssues: rawMVal.dailyOperationalIssues || activeOutletData[mKey]?.dailyOperationalIssues || {},
+          operationalIssues: rawMVal.operationalIssues || activeOutletData[mKey]?.operationalIssues || [],
+          dailySpk3Records: rawMVal.dailySpk3Records || activeOutletData[mKey]?.dailySpk3Records || {},
+          spk3Records: rawMVal.spk3Records || activeOutletData[mKey]?.spk3Records || [],
         };
         activeOutletData[mKey] = mMerged;
         monthlyDataMap[mKey] = mMerged;
@@ -903,6 +1038,10 @@ const App: React.FC = () => {
         manpowerData: currentData.manpowerData || globalData.manpowerData,
         dailyVoidBills: (currentData as any).dailyVoidBills || activeOutletData[currMonthKey]?.dailyVoidBills || {},
         voidBills: (currentData as any).voidBills || activeOutletData[currMonthKey]?.voidBills || [],
+        dailyOperationalIssues: (currentData as any).dailyOperationalIssues || activeOutletData[currMonthKey]?.dailyOperationalIssues || {},
+        operationalIssues: (currentData as any).operationalIssues || activeOutletData[currMonthKey]?.operationalIssues || [],
+        dailySpk3Records: (currentData as any).dailySpk3Records || activeOutletData[currMonthKey]?.dailySpk3Records || {},
+        spk3Records: (currentData as any).spk3Records || activeOutletData[currMonthKey]?.spk3Records || [],
       };
       activeOutletData[currMonthKey] = currentMonthMerged;
       monthlyDataMap[currMonthKey] = currentMonthMerged;
@@ -922,6 +1061,10 @@ const App: React.FC = () => {
       activeOutletData.dailyCPA = globalData.dailyCPA;
       activeOutletData.dailyVoidBills = (currentData as any).dailyVoidBills || activeOutletData.dailyVoidBills || {};
       activeOutletData.voidBills = (currentData as any).voidBills || activeOutletData.voidBills || [];
+      activeOutletData.dailyOperationalIssues = (currentData as any).dailyOperationalIssues || activeOutletData.dailyOperationalIssues || {};
+      activeOutletData.operationalIssues = (currentData as any).operationalIssues || activeOutletData.operationalIssues || [];
+      activeOutletData.dailySpk3Records = (currentData as any).dailySpk3Records || activeOutletData.dailySpk3Records || {};
+      activeOutletData.spk3Records = (currentData as any).spk3Records || activeOutletData.spk3Records || [];
       activeOutletData.dailyGSI = (globalData as any).dailyGSI;
       activeOutletData.guestComplaints = globalData.guestComplaints;
       activeOutletData.manpowerData = currentData.manpowerData || globalData.manpowerData;
@@ -2096,11 +2239,16 @@ const App: React.FC = () => {
       if (loggingOutEmail) {
         setOnlineUsers(prev => prev.filter(u => u.email?.toLowerCase() !== loggingOutEmail.toLowerCase()));
       }
+      setPresencePopups([]);
+      hasInitializedPresenceRef.current = false;
+      prevOtherUsersMapRef.current.clear();
+      seenPresenceEventIdsRef.current.clear();
+      lastPopupByTypeEmailRef.current.clear();
 
       // 2. Instantly notify server to wipe active presence entry (0 delay for all other users)
       if (loggingOutEmail) {
-        const payload = JSON.stringify({ email: loggingOutEmail, uid: presenceKey });
-        fetch(`/api/presence/logout?email=${encodeURIComponent(loggingOutEmail)}&uid=${encodeURIComponent(presenceKey)}`, {
+        const payload = JSON.stringify({ email: loggingOutEmail, uid: presenceKey, logoutAll: true });
+        fetch(`/api/presence/logout?email=${encodeURIComponent(loggingOutEmail)}&uid=${encodeURIComponent(presenceKey)}&logoutAll=true`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: payload,
@@ -2110,7 +2258,7 @@ const App: React.FC = () => {
         if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
           try {
             const blob = new Blob([payload], { type: 'application/json' });
-            navigator.sendBeacon(`/api/presence/logout?email=${encodeURIComponent(loggingOutEmail)}&uid=${encodeURIComponent(presenceKey)}`, blob);
+            navigator.sendBeacon(`/api/presence/logout?email=${encodeURIComponent(loggingOutEmail)}&uid=${encodeURIComponent(presenceKey)}&logoutAll=true`, blob);
           } catch {}
         }
       }
@@ -2459,6 +2607,24 @@ const App: React.FC = () => {
             onUpdate={updateFullState}
             showToast={showToast}
           />;
+        case ModuleType.OPERATIONAL_ISSUE:
+          return <OperationalIssueModule
+            data={currentData}
+            staffList={globalData.staffList || currentData.staffList || []}
+            selectedOutlet={user.selectedOutlet || ''}
+            filters={filters}
+            onUpdate={updateFullState}
+            showToast={showToast}
+          />;
+        case ModuleType.SPK3:
+          return <Spk3Module
+            data={currentData}
+            staffList={globalData.staffList || currentData.staffList || []}
+            selectedOutlet={user.selectedOutlet || ''}
+            filters={filters}
+            onUpdate={updateFullState}
+            showToast={showToast}
+          />;
         case ModuleType.REGIONAL_REPORT:
           return <RegionalManagerModule 
             data={currentData} 
@@ -2640,6 +2806,7 @@ const App: React.FC = () => {
           </div>
         )}
       </AnimatePresence>
+      <PresencePopupStack popups={presencePopups} onDismiss={dismissPresencePopup} />
       <RealtimeFeatures user={user} isAdmin={isAdmin} globalData={globalData} outletMonthlyData={outletMonthlyData} filters={filters} onlineUsers={onlineUsers} setOnlineUsers={setOnlineUsers} />
       <DailyReminderPopup user={user} isOnDashboard={activeModule === ModuleType.DASHBOARD} />
       <OutletControlModal

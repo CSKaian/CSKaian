@@ -59,6 +59,12 @@
         "logisticPeriodPrices": { "type": "object" },
         "dailyQA": { "type": "object" },
         "dailyRecording": { "type": "object" },
+        "dailyVoidBills": { "type": "object" },
+        "voidBills": { "type": "array" },
+        "dailyOperationalIssues": { "type": "object" },
+        "operationalIssues": { "type": "array" },
+        "dailySpk3Records": { "type": "object" },
+        "spk3Records": { "type": "array" },
         "isDeleted": { "type": "boolean" }
       },
       "required": ["updatedAt", "lastUpdatedBy"]
@@ -154,25 +160,9 @@
       "properties": {
         "status": { "type": "string" }
       }
-    },
-    "Laporan": {
-      "title": "Laporan",
-      "description": "CSK Project daily progress report document.",
-      "type": "object",
-      "properties": {
-        "lokasi": { "type": "string" },
-        "pekerjaan": { "type": "string" },
-        "progres": { "type": "string" },
-        "createdAt": { "type": "object" }
-      },
-      "required": ["lokasi", "pekerjaan", "progres"]
     }
   },
   "firestore": {
-    "/laporan/{docId}": {
-      "schema": "Laporan",
-      "description": "Daily project reports with irit pagination."
-    },
     "/system_data/global_data": {
       "schema": "GlobalSystemData",
       "description": "Global system settings, staff list, and shared data."

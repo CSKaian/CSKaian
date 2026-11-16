@@ -1,4 +1,4 @@
-import { OutletManpowerData, ManpowerSection, ExternalManpowerEntry } from '../types';
+import { OutletManpowerData, ManpowerSection, ExternalManpowerEntry, Staff } from '../types';
 
 export const createDefaultManpowerData = (outletName: string = 'SH THE BARN'): OutletManpowerData => {
   const sections: ManpowerSection[] = [
@@ -813,4 +813,138 @@ export const extractOutletManpowerMap = (
     }
   }
   return map;
+};
+
+export interface OutletStaffOption {
+  id: string;
+  name: string;
+  role: string;
+  division: string;
+  section: string;
+  isLeader: boolean;
+  source: 'MANPOWER' | 'STAFF_LIST';
+}
+
+export const extractOutletStaffOptions = (
+  manpowerData: Record<string, OutletManpowerData> | undefined,
+  staffList: Staff[] | undefined,
+  currentOutlet: string,
+  targetMonthKey: string
+): OutletStaffOption[] => {
+  const list: OutletStaffOption[] = [];
+  const seenNames = new Set<string>();
+
+  const addStaff = (
+    name: string,
+    role: string,
+    division: string,
+    section: string,
+    isLeader: boolean,
+    source: 'MANPOWER' | 'STAFF_LIST',
+    id?: string
+  ) => {
+    const cleanName = (name || '').trim();
+    if (!cleanName) return;
+    const key = cleanName.toLowerCase();
+    if (seenNames.has(key)) return;
+    seenNames.add(key);
+
+    const roleLower = (role || '').toLowerCase();
+    const secUpper = (section || '').toUpperCase();
+    const checkLeader =
+      isLeader ||
+      roleLower.includes('manager') ||
+      roleLower.includes('supervisor') ||
+      roleLower.includes('captain') ||
+      roleLower.includes('leader') ||
+      roleLower.includes('mod') ||
+      roleLower.includes('head') ||
+      roleLower.includes('chef') ||
+      roleLower.includes('cdp') ||
+      secUpper.includes('LEADER');
+
+    list.push({
+      id: id || `st_${cleanName.replace(/\s+/g, '_')}`,
+      name: cleanName,
+      role: role || section || 'Staff',
+      division: (division || 'SERVICE').toUpperCase(),
+      section: section || role || 'General',
+      isLeader: checkLeader,
+      source
+    });
+  };
+
+  // 1. Primary: Resolved Manpower Table for this outlet & period
+  const resolvedManpower = resolveOutletManpowerData(manpowerData, currentOutlet, targetMonthKey);
+  if (resolvedManpower && Array.isArray(resolvedManpower.sections)) {
+    resolvedManpower.sections.forEach((sec) => {
+      const secDivision = sec.division || 'SERVICE';
+      if (Array.isArray(sec.slots)) {
+        sec.slots.forEach((slot) => {
+          if (slot.staffName && slot.staffName.trim()) {
+            addStaff(
+              slot.staffName,
+              slot.position || sec.name,
+              secDivision,
+              sec.name,
+              sec.name.toUpperCase().includes('LEADER'),
+              'MANPOWER',
+              slot.id || slot.staffId
+            );
+          }
+        });
+      }
+    });
+  }
+
+  // 2. Scan other manpower keys belonging to this outlet
+  if (manpowerData && typeof manpowerData === 'object') {
+    Object.entries(manpowerData).forEach(([key, mpData]: [string, any]) => {
+      if (!key.toUpperCase().startsWith(currentOutlet.toUpperCase()) || !mpData || !Array.isArray(mpData.sections)) return;
+      mpData.sections.forEach((sec: any) => {
+        if (Array.isArray(sec.slots)) {
+          sec.slots.forEach((slot: any) => {
+            if (slot.staffName && slot.staffName.trim()) {
+              addStaff(
+                slot.staffName,
+                slot.position || sec.name,
+                sec.division || 'SERVICE',
+                sec.name || '',
+                String(sec.name || '').toUpperCase().includes('LEADER'),
+                'MANPOWER',
+                slot.id || slot.staffId
+              );
+            }
+          });
+        }
+      });
+    });
+  }
+
+  // 3. Fallback: Active staffList for this outlet
+  if (Array.isArray(staffList)) {
+    staffList.forEach((s) => {
+      if (
+        s &&
+        s.name &&
+        (s.status === 'ACTIVE' || !s.status) &&
+        (!s.outlet || s.outlet.toUpperCase() === currentOutlet.toUpperCase() || currentOutlet === 'ALL')
+      ) {
+        addStaff(
+          s.name,
+          s.role || 'Staff',
+          s.division || 'SERVICE',
+          s.role || 'Staff',
+          false,
+          'STAFF_LIST',
+          s.id
+        );
+      }
+    });
+  }
+
+  return list.sort((a, b) => {
+    if (a.isLeader !== b.isLeader) return a.isLeader ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
 };
