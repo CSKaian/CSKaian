@@ -10,12 +10,12 @@ import {
 import { getAuth } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBEgdscxiW6uTLGVJCdzrjYVtJFzsDWuSw",
-  authDomain: "apk-jkt.firebaseapp.com",
-  projectId: "apk-jkt",
-  storageBucket: "apk-jkt.firebasestorage.app",
-  messagingSenderId: "116878113263",
-  appId: "1:116878113263:web:a354e19afa1febf7fd1e1a"
+  apiKey: "AIzaSyCIhJ2pdz2sFGkWS2ZuO_aosrytyYwrCuU",
+  authDomain: "cskaianjakarta.firebaseapp.com",
+  projectId: "cskaianjakarta",
+  storageBucket: "cskaianjakarta.firebasestorage.app",
+  messagingSenderId: "550793182818",
+  appId: "1:550793182818:web:28bb25ca2e48d489c41b3b"
 };
 
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
