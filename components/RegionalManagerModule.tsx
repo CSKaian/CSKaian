@@ -68,6 +68,41 @@ interface TabProps {
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
+const safeParseUpdatedDate = (val: any): Date | null => {
+  if (!val) return null;
+  try {
+    if (typeof val?.toDate === 'function') {
+      const d = val.toDate();
+      return isNaN(d.getTime()) ? null : d;
+    }
+    if (typeof val === 'object' && typeof val.seconds === 'number') {
+      const ms = (val.seconds * 1000) + Math.floor((val.nanoseconds || 0) / 1e6);
+      const d = new Date(ms);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  } catch {
+    return null;
+  }
+};
+
+const VALID_RM_TAB_IDS = new Set([
+  'OVERVIEW', 'REVENUE_MTD', 'REVENUE_CONTRIBUTION', 'WEEKDAY_WEEKEND_AVG', 'WEEKLY_REVENUE',
+  'WEEKLY_OVERTIME', 'MANPOWER_REGIONAL', 'QA_REPORT_REGIONAL', 'COGS', 'RECEIVING_SHEET',
+  'OUTLET_PERFORMANCE', 'REKAPAN_PATTY_CASH', 'THIRD_PARTY_GAS', 'REKAPAN_DISCOUNT',
+  'REKAPAN_LOGISTIK', 'WEEKLY_REPORT', 'SATISFACTION', 'COMPLIMENTARY', 'CITY_LEDGER',
+  'ENERGY_COST', 'PATTY_CASH_EXPENSE', 'MAIN_STORE_KITCHEN', 'COMMODITY_KITCHEN_BAR',
+  'GSI_REGIONAL', 'GSI', 'SUMMARY_REPORT', 'GOOGLE_REVIEW_REGIONAL', 'BANKING_PROMO_REGIONAL',
+  'STRATEGI_MENU_REGIONAL', 'VOID_BILL_REGIONAL', 'OPERATIONAL_ISSUE_REGIONAL',
+  'SPK3_REGIONAL', 'OUTLET_REVIEW'
+]);
+
+const resolveValidRMTab = (tab: any): any => {
+  if (typeof tab === 'string' && VALID_RM_TAB_IDS.has(tab)) return tab;
+  return 'OVERVIEW';
+};
+
 const getGoogleRatingAtMonth = (data: Record<string, any>, outletId: string, monthIdx: number, selectedYear: number) => {
   const outletData = data[outletId] || {};
   const mData = outletData[String(monthIdx)];
@@ -592,13 +627,19 @@ const RevenueTab: React.FC<TabProps> = ({ data, selectedMonth, selectedYear, isP
                           <div className="flex flex-col">
                             <span className={`text-white ${isPreviewMode ? 'text-[8px]' : 'text-[10px]'}`}>{outlet.split(' ')[0]}</span>
                             <span className={`text-indigo-400 font-black ${isPreviewMode ? 'text-[6px]' : 'text-[8px]'}`}>{outlet.split(' ').slice(1).join(' ')}</span>
-                            {r.lastUpdated ? (
-                              <span className={`font-black text-slate-500 tracking-tighter mt-1 ${isPreviewMode ? 'text-[5px]' : 'text-[7px]'}`}>
-                                 SYNC: {new Date(r.lastUpdated).toLocaleDateString([], { month: '2-digit', day: '2-digit' })} {new Date(r.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                              </span>
-                            ) : (
-                              <span className={`font-black text-rose-500/50 tracking-tighter mt-1 ${isPreviewMode ? 'text-[5px]' : 'text-[7px]'}`}>NO SYNC</span>
-                            )}
+                            {(() => {
+                              const updDate = safeParseUpdatedDate(r.lastUpdated);
+                              if (updDate) {
+                                return (
+                                  <span className={`font-black text-slate-500 tracking-tighter mt-1 ${isPreviewMode ? 'text-[5px]' : 'text-[7px]'}`}>
+                                    SYNC: {updDate.toLocaleDateString([], { month: '2-digit', day: '2-digit' })} {updDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                );
+                              }
+                              return (
+                                <span className={`font-black text-rose-500/50 tracking-tighter mt-1 ${isPreviewMode ? 'text-[5px]' : 'text-[7px]'}`}>NO SYNC</span>
+                              );
+                            })()}
                           </div>
                         </td>
                         <td className={`${isPreviewMode ? 'p-1' : 'p-2'} border-r border-white/10 text-center font-black text-emerald-400 tracking-widest`}>{r.noOfEmployee}</td>
@@ -2713,7 +2754,7 @@ const RegionalManagerModule: React.FC<RMProps> = ({
   const selectedMonth = safeSelectedMonth;
   const selectedYear = safeSelectedYear;
 
-  const [activeTab, setActiveTab] = useState(initialTab);
+  const [activeTab, setActiveTab] = useState(() => resolveValidRMTab(initialTab));
   const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [selectedOutlet, setSelectedOutlet] = useState<string>(initialSelectedOutlet || '');
   const [selectedArea, setSelectedArea] = useState<string>('ALL');
@@ -2917,7 +2958,7 @@ const RegionalManagerModule: React.FC<RMProps> = ({
   }, [restrictTabs]);
 
   useEffect(() => {
-    setActiveTab(initialTab);
+    setActiveTab(resolveValidRMTab(initialTab));
   }, [initialTab]);
 
   if (isLoading) {
@@ -3315,13 +3356,12 @@ const RegionalManagerModule: React.FC<RMProps> = ({
                         </p>
                       </div>
                       {(() => {
-                        const lastUpdates = Object.values(allOutletsData)
-                          .map((d: any) => d._lastUpdated)
-                          .filter(Boolean)
-                          .sort()
-                          .reverse();
-                        if (lastUpdates.length > 0) {
-                          const lastDate = new Date(lastUpdates[0]);
+                        const lastDates = Object.values(allOutletsData || {})
+                          .map((d: any) => safeParseUpdatedDate(d?._lastUpdated))
+                          .filter((d): d is Date => d !== null)
+                          .sort((a, b) => b.getTime() - a.getTime());
+                        if (lastDates.length > 0) {
+                          const lastDate = lastDates[0];
                           return (
                             <p className="text-[7px] font-black text-slate-600 uppercase tracking-tighter mt-0.5">
                               Last Data Entry: {lastDate.toLocaleDateString()} {lastDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

@@ -137,6 +137,32 @@ function checkQuota(): boolean {
   return true;
 }
 
+export function normalizeTimestampIso(val: any): string | null {
+  if (!val) return null;
+  try {
+    if (typeof val?.toDate === 'function') {
+      const d = val.toDate();
+      return isNaN(d.getTime()) ? null : d.toISOString();
+    }
+    if (typeof val === 'object' && typeof val.seconds === 'number') {
+      const ms = (val.seconds * 1000) + Math.floor((val.nanoseconds || 0) / 1e6);
+      const d = new Date(ms);
+      return isNaN(d.getTime()) ? null : d.toISOString();
+    }
+    if (typeof val === 'number') {
+      const d = new Date(val);
+      return isNaN(d.getTime()) ? null : d.toISOString();
+    }
+    if (typeof val === 'string') {
+      const ms = Date.parse(val);
+      return isNaN(ms) ? null : new Date(ms).toISOString();
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 export async function pushNotification(user: string, outlet: Outlet, message: string): Promise<boolean> {
   if (!checkQuota() || !auth.currentUser) return false;
   try {
@@ -167,9 +193,14 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     return;
   }
 
-  if (isOfflineError(error) || errorMessage.includes('INTERNAL ASSERTION FAILED') || errorMessage.includes('Unexpected state')) {
-    console.warn(`[CloudSync] Firestore operation (${operationType}) noted offline or internal assertion at path (${path}):`, errorMessage);
-    // Return gracefully for ALL operations during offline state or internal assertion instead of throwing fatal crashes
+  if (
+    isOfflineError(error) ||
+    errorMessage.includes('INTERNAL ASSERTION FAILED') ||
+    errorMessage.includes('Unexpected state') ||
+    errorMessage.includes('permission-denied') ||
+    errorMessage.includes('Missing or insufficient permissions')
+  ) {
+    console.warn(`[CloudSync] Firestore operation (${operationType}) fallback at path (${path}):`, errorMessage);
     return;
   }
 
@@ -191,12 +222,8 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   };
   
   const jsonError = JSON.stringify(errInfo);
-  console.error('Firestore Error: ', jsonError);
-  if (operationType === 'listen' || operationType === 'get' || operationType === 'list') {
-    console.warn(`[CloudSync] Non-fatal ${operationType} failure at path: ${path}`);
-    return;
-  }
-  throw new Error(jsonError);
+  console.warn('[CloudSync] Non-fatal Firestore Error: ', jsonError);
+  return;
 }
 
 // CRITICAL: Call getDocFromServer to test connection on boot
@@ -267,7 +294,7 @@ export function startNotificationListener(onUpdate: (notifications: Notification
         user: data.user,
         outlet: data.outlet,
         message: data.message,
-        timestamp: data.timestamp?.toDate ? data.timestamp.toDate().toISOString() : (typeof data.timestamp === 'string' ? data.timestamp : new Date().toISOString())
+        timestamp: normalizeTimestampIso(data.timestamp) || new Date().toISOString()
       });
     });
     onUpdate(notifs);
@@ -813,7 +840,7 @@ export async function fetchAllOutletsData(): Promise<Record<string, any> | null>
             ...filled,
             isDeleted: false,
             _googleReview: data.googleReview || null,
-            _lastUpdated: data.updatedAt || null
+            _lastUpdated: normalizeTimestampIso(data.updatedAt)
           };
         });
       }
@@ -836,13 +863,14 @@ export async function fetchAllOutletsData(): Promise<Record<string, any> | null>
         const data = docSnap.data();
         const filled = unpackOutletDocument(data);
         const existing = results[docSnap.id];
-        const cloudUpdated = data.updatedAt?.toDate?.()?.toISOString() || null;
-        if (!existing || (cloudUpdated && (!existing._lastUpdated || cloudUpdated >= existing._lastUpdated))) {
+        const cloudUpdated = normalizeTimestampIso(data.updatedAt);
+        const existingUpdated = normalizeTimestampIso(existing?._lastUpdated);
+        if (!existing || (cloudUpdated && (!existingUpdated || cloudUpdated >= existingUpdated))) {
           results[docSnap.id] = {
             ...filled,
             isDeleted: false,
             _googleReview: data.googleReview || null,
-            _lastUpdated: cloudUpdated || existing?._lastUpdated || null
+            _lastUpdated: cloudUpdated || existingUpdated || null
           };
         }
       });
@@ -903,7 +931,7 @@ export function startAllOutletsListener(onUpdate: (data: Record<string, any>) =>
               ...filled,
               isDeleted: false,
               _googleReview: data.googleReview || null,
-              _lastUpdated: data.updatedAt || null
+              _lastUpdated: normalizeTimestampIso(data.updatedAt)
             };
           });
           const newHash = JSON.stringify(processed);
@@ -944,7 +972,7 @@ export function startAllOutletsListener(onUpdate: (data: Record<string, any>) =>
             ...filled,
             isDeleted: false,
             _googleReview: data.googleReview || null,
-            _lastUpdated: data.updatedAt?.toDate?.()?.toISOString() || null
+            _lastUpdated: normalizeTimestampIso(data.updatedAt)
           };
         });
         const newHash = JSON.stringify(results);

@@ -15,6 +15,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { ChatMessage, Presence, Outlet } from '../types';
 import { handleFirestoreError, OperationType, isQuotaExceeded } from '../services/cloudService';
+import { safeStorage } from '../lib/safeStorage';
 
 interface Props {
   user: { email: string; selectedOutlet?: Outlet; photoURL?: string; displayName?: string };
@@ -80,31 +81,22 @@ const RealtimeFeatures: React.FC<Props> = ({
 
   // Dynamic Presence Session Settings
   const [onlineTimeLimit, setOnlineTimeLimit] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem('ONLINE_TIME_LIMIT');
-      return saved ? parseInt(saved, 10) : 1440;
-    } catch {
-      return 1440;
-    }
+    const saved = safeStorage.getItem('ONLINE_TIME_LIMIT');
+    const parsed = saved ? parseInt(saved, 10) : NaN;
+    return !isNaN(parsed) && parsed > 0 ? parsed : 1440;
   });
 
   const [maxOnlineUsers, setMaxOnlineUsers] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem('MAX_ONLINE_USERS');
-      return saved ? parseInt(saved, 10) : 10;
-    } catch {
-      return 10;
-    }
+    const saved = safeStorage.getItem('MAX_ONLINE_USERS');
+    const parsed = saved ? parseInt(saved, 10) : NaN;
+    return !isNaN(parsed) && parsed > 0 ? parsed : 10;
   });
 
   // Daily Input Quota Settings (default 2500 slots to avoid premature quota exhausted warnings)
   const [maxDailyInputs, setMaxDailyInputs] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem('MAX_DAILY_INPUT_LIMIT');
-      return saved ? parseInt(saved, 10) : 2500;
-    } catch {
-      return 2500;
-    }
+    const saved = safeStorage.getItem('MAX_DAILY_INPUT_LIMIT');
+    const parsed = saved ? parseInt(saved, 10) : NaN;
+    return !isNaN(parsed) && parsed > 0 ? parsed : 2500;
   });
 
   // Real-time Countdown Timer until Midnight (Daily resets)
@@ -265,15 +257,15 @@ const RealtimeFeatures: React.FC<Props> = ({
           if (json.config) {
             if (json.config.maxDailyInputs !== undefined) {
               setMaxDailyInputs(json.config.maxDailyInputs);
-              localStorage.setItem('MAX_DAILY_INPUT_LIMIT', json.config.maxDailyInputs.toString());
+              safeStorage.setItem('MAX_DAILY_INPUT_LIMIT', json.config.maxDailyInputs.toString());
             }
             if (json.config.onlineTimeLimit !== undefined) {
               setOnlineTimeLimit(json.config.onlineTimeLimit);
-              localStorage.setItem('ONLINE_TIME_LIMIT', json.config.onlineTimeLimit.toString());
+              safeStorage.setItem('ONLINE_TIME_LIMIT', json.config.onlineTimeLimit.toString());
             }
             if (json.config.maxOnlineUsers !== undefined) {
               setMaxOnlineUsers(json.config.maxOnlineUsers);
-              localStorage.setItem('MAX_ONLINE_USERS', json.config.maxOnlineUsers.toString());
+              safeStorage.setItem('MAX_ONLINE_USERS', json.config.maxOnlineUsers.toString());
             }
           }
         }
@@ -290,15 +282,15 @@ const RealtimeFeatures: React.FC<Props> = ({
           const data = snapshot.data();
           if (data.maxDailyInputs !== undefined) {
             setMaxDailyInputs(data.maxDailyInputs);
-            localStorage.setItem('MAX_DAILY_INPUT_LIMIT', data.maxDailyInputs.toString());
+            safeStorage.setItem('MAX_DAILY_INPUT_LIMIT', data.maxDailyInputs.toString());
           }
           if (data.onlineTimeLimit !== undefined) {
             setOnlineTimeLimit(data.onlineTimeLimit);
-            localStorage.setItem('ONLINE_TIME_LIMIT', data.onlineTimeLimit.toString());
+            safeStorage.setItem('ONLINE_TIME_LIMIT', data.onlineTimeLimit.toString());
           }
           if (data.maxOnlineUsers !== undefined) {
             setMaxOnlineUsers(data.maxOnlineUsers);
-            localStorage.setItem('MAX_ONLINE_USERS', data.maxOnlineUsers.toString());
+            safeStorage.setItem('MAX_ONLINE_USERS', data.maxOnlineUsers.toString());
           }
         }
       }, () => {});

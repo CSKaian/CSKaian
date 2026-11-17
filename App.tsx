@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { ModuleType, AppState, User, SyncStatus, Outlet, Notification, LeaveRecord, CustomSupplier, Presence, PresenceEvent } from './types';
 import { INITIAL_STATE, ROLES_BY_DIVISION, DIVISIONS, OUTLETS, getActiveOutletNames, getStoredCustomSuppliers } from './constants';
 import { fetchUserData, saveGlobalData, saveOutletData, startRealtimeListener, startNotificationListener, isQuotaExceeded, resetQuotaExceeded, fetchAllOutletsData, startAllOutletsListener, testConnection } from './services/cloudService';
-import { safeStorage, safeClipboard, safeWindow } from './lib/safeStorage';
+import { safeStorage, safeSessionStorage, safeClipboard, safeWindow } from './lib/safeStorage';
 import { toLocalDateStr } from './lib/dateUtils';
 import { calculateLeaveEntitlement } from './lib/staffUtils';
 import { auth, db } from './firebase';
@@ -283,6 +283,9 @@ const App: React.FC = () => {
   const flushPendingSyncRef = useRef<(() => Promise<boolean>) | null>(null);
   const isLoggingOutRef = useRef(false);
 
+  const autoLoginKeyRef = useRef<string>('');
+  const loginSeqRef = useRef<number>(0);
+
   // Synchronize dynamic settings (like Batas Maksimal Input Harian) across users in real-time
   useEffect(() => {
     if (!user.isLoggedIn || !user.email) return;
@@ -293,14 +296,19 @@ const App: React.FC = () => {
       .then(data => {
         if (data?.config?.maxDailyInputs !== undefined) {
           maxDailyInputLimitRef.current = data.config.maxDailyInputs;
-          localStorage.setItem('MAX_DAILY_INPUT_LIMIT', data.config.maxDailyInputs.toString());
+          safeStorage.setItem('MAX_DAILY_INPUT_LIMIT', data.config.maxDailyInputs.toString());
         }
       })
       .catch(() => {});
 
     try {
-      const saved = localStorage.getItem('MAX_DAILY_INPUT_LIMIT');
-      if (saved) maxDailyInputLimitRef.current = parseInt(saved, 10);
+      const saved = safeStorage.getItem('MAX_DAILY_INPUT_LIMIT');
+      if (saved) {
+        const parsedLimit = parseInt(saved, 10);
+        if (!isNaN(parsedLimit) && parsedLimit > 0) {
+          maxDailyInputLimitRef.current = parsedLimit;
+        }
+      }
     } catch (e) {
       // Ignore
     }
@@ -313,7 +321,7 @@ const App: React.FC = () => {
         const data = snapshot.data();
         if (data.maxDailyInputs !== undefined) {
           maxDailyInputLimitRef.current = data.maxDailyInputs;
-          localStorage.setItem('MAX_DAILY_INPUT_LIMIT', data.maxDailyInputs.toString());
+          safeStorage.setItem('MAX_DAILY_INPUT_LIMIT', data.maxDailyInputs.toString());
         }
       }
     }).catch((error) => {
@@ -322,17 +330,35 @@ const App: React.FC = () => {
   }, [user.isLoggedIn, user.email]);
 
   const [filters, setFilters] = useState(() => {
+    const now = new Date();
     const defaultFilters = {
-      month: new Date().getMonth().toString(),
-      year: new Date().getFullYear().toString(),
-      startDate: toLocalDateStr(new Date()),
-      endDate: toLocalDateStr(new Date())
+      month: now.getMonth().toString(),
+      year: now.getFullYear().toString(),
+      startDate: toLocalDateStr(now),
+      endDate: toLocalDateStr(now)
     };
     const saved = safeStorage.getItem('BARN_FILTERS');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        return { ...defaultFilters, ...parsed };
+        if (parsed && typeof parsed === 'object') {
+          const m = parseInt(String(parsed.month), 10);
+          const y = parseInt(String(parsed.year), 10);
+          const validMonth = !isNaN(m) && m >= 0 && m <= 11 ? String(m) : defaultFilters.month;
+          const validYear = !isNaN(y) && y >= 2020 && y <= 2100 ? String(y) : defaultFilters.year;
+          const validStart = typeof parsed.startDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.startDate)
+            ? parsed.startDate
+            : defaultFilters.startDate;
+          const validEnd = typeof parsed.endDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.endDate)
+            ? parsed.endDate
+            : defaultFilters.endDate;
+          return {
+            month: validMonth,
+            year: validYear,
+            startDate: validStart,
+            endDate: validEnd
+          };
+        }
       } catch (e) {
         // Fallback to default
       }
@@ -416,11 +442,21 @@ const App: React.FC = () => {
   useEffect(() => {
     let isMounted = true;
 
+    // Safety timeout: guarantee the auth loading spinner never hangs indefinitely
+    const authReadyTimeout = setTimeout(() => {
+      if (isMounted) {
+        setIsAuthReady(true);
+      }
+    }, 1500);
+
     const ensureAuth = async () => {
       try {
         if (!auth.currentUser) {
           const { signInAnonymously } = await import('firebase/auth');
-          await signInAnonymously(auth);
+          await Promise.race([
+            signInAnonymously(auth),
+            new Promise(res => setTimeout(res, 2500))
+          ]);
         }
       } catch (err) {
         console.warn('[Auth] Anonymous bootstrap skipped/failed:', err);
@@ -440,7 +476,11 @@ const App: React.FC = () => {
       if (resolvedEmail && !isLoggingOutRef.current) {
         const savedOutlet = safeStorage.getItem('BARN_SELECTED_OUTLET') as Outlet;
         if (savedOutlet && !isLoggingOutRef.current) {
-          handleLogin(resolvedEmail, savedOutlet);
+          const autoKey = `${resolvedEmail.trim().toLowerCase()}::${savedOutlet}`;
+          if (autoLoginKeyRef.current !== autoKey) {
+            autoLoginKeyRef.current = autoKey;
+            handleLogin(resolvedEmail, savedOutlet);
+          }
         } else {
           setUser({ email: resolvedEmail, isLoggedIn: false, photoURL, displayName });
         }
@@ -454,6 +494,7 @@ const App: React.FC = () => {
 
     return () => {
       isMounted = false;
+      clearTimeout(authReadyTimeout);
       unsubscribe();
     };
   }, []);
@@ -470,10 +511,10 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!(user.isLoggedIn && user.email) && !isPublicView) return;
 
-    let tabSessionId = sessionStorage.getItem('SH_TAB_SESSION_ID');
+    let tabSessionId = safeSessionStorage.getItem('SH_TAB_SESSION_ID');
     if (!tabSessionId) {
       tabSessionId = Math.random().toString(36).substring(2, 9);
-      sessionStorage.setItem('SH_TAB_SESSION_ID', tabSessionId);
+      safeSessionStorage.setItem('SH_TAB_SESSION_ID', tabSessionId);
     }
 
     const storedEmail = safeStorage.getItem('MANUAL_USER_EMAIL') || safeStorage.getItem('BARN_USER_SESSION') || '';
@@ -749,7 +790,7 @@ const App: React.FC = () => {
   }, [user.isLoggedIn, user.email, user.selectedOutlet, user.photoURL, user.displayName, auth.currentUser?.uid, isPublicView, enqueuePresencePopups]);
   
   useEffect(() => {
-    if (!globalData.staffList) return;
+    if (!Array.isArray(globalData.staffList)) return;
     
     const today = new Date();
     const tomorrow = new Date();
@@ -763,7 +804,7 @@ const App: React.FC = () => {
     const bdayNotifs: Notification[] = [];
 
     globalData.staffList.forEach(staff => {
-      if (!staff.birthDate || staff.status === 'RESIGNED_PROSEDUR' || staff.status === 'RESIGNED_NON_PROSEDUR') return;
+      if (!staff || !staff.birthDate || staff.status === 'RESIGNED_PROSEDUR' || staff.status === 'RESIGNED_NON_PROSEDUR') return;
       
       const birthDateObj = new Date(staff.birthDate);
       const bMonth = birthDateObj.getMonth() + 1;
@@ -959,6 +1000,7 @@ const App: React.FC = () => {
 
   // Synchronize globalData state with the current selected month's values (including fallbacks)
   useEffect(() => {
+    if (!outletMonthlyData || Object.keys(outletMonthlyData).length === 0) return;
     const monthKey = filters.month;
     const monthData = outletMonthlyData[monthKey] || {};
     
@@ -1299,42 +1341,45 @@ const App: React.FC = () => {
     );
   }, []);
 
+  const globalDataRef = useRef(globalData);
+  globalDataRef.current = globalData;
+
   const setGlobalData = useCallback((updater: any) => {
-    setGlobalDataState(prev => {
-      const next = typeof updater === 'function' ? updater(prev) : { ...prev, ...updater };
-      
-      try {
-        // Replicate these changes directly into the current active month in outletMonthlyDataState!
-        setOutletMonthlyDataState(prevMonths => {
-          const mKey = filters.month;
-          const nextMonths: Record<string, any> = {
-            ...prevMonths,
-            [mKey]: {
-              ...INITIAL_STATE,
-              ...(prevMonths[mKey] || {}),
-              ...next
-            }
-          };
-          if (next.manpowerData && typeof next.manpowerData === 'object') {
-            for (let m = 0; m < 12; m++) {
-              const k = m.toString();
-              nextMonths[k] = {
-                ...INITIAL_STATE,
-                ...(nextMonths[k] || {}),
-                manpowerData: {
-                  ...(nextMonths[k]?.manpowerData || {}),
-                  ...next.manpowerData
-                }
-              };
-            }
+    const prev = globalDataRef.current;
+    const next = typeof updater === 'function' ? updater(prev) : { ...prev, ...updater };
+    globalDataRef.current = next;
+    setGlobalDataState(next);
+
+    try {
+      // Replicate these changes cleanly into the current active month in outletMonthlyDataState outside the state updater
+      setOutletMonthlyDataState(prevMonths => {
+        const mKey = filters.month;
+        const nextMonths: Record<string, any> = {
+          ...prevMonths,
+          [mKey]: {
+            ...INITIAL_STATE,
+            ...(prevMonths[mKey] || {}),
+            ...next
           }
-          return nextMonths;
-        });
-      } catch (e) {
-        console.error(e);
-      }
-      return next;
-    });
+        };
+        if (next.manpowerData && typeof next.manpowerData === 'object') {
+          for (let m = 0; m < 12; m++) {
+            const k = m.toString();
+            nextMonths[k] = {
+              ...INITIAL_STATE,
+              ...(nextMonths[k] || {}),
+              manpowerData: {
+                ...(nextMonths[k]?.manpowerData || {}),
+                ...next.manpowerData
+              }
+            };
+          }
+        }
+        return nextMonths;
+      });
+    } catch (e) {
+      console.error(e);
+    }
   }, [filters.month]);
 
   const setOutletMonthlyData = useCallback((updater: any) => {
@@ -1362,11 +1407,13 @@ const App: React.FC = () => {
 
   const handleLogin = async (email: string, outlet: Outlet) => {
     if (isLoggingOutRef.current) return;
+    const myLoginSeq = ++loginSeqRef.current;
     isHydrated.current = false;
     setIsRefreshing(true);
 
     const cleanEmail = (email || '').trim().toLowerCase();
     const outletKey = outlet;
+    autoLoginKeyRef.current = `${cleanEmail}::${outletKey}`;
 
     try {
       // 1. Ensure Firebase authentication is initialized (non-blocking race)
@@ -1511,6 +1558,8 @@ const App: React.FC = () => {
           customSuppliers: customSuppliers || getStoredCustomSuppliers()
         };
 
+        if (myLoginSeq !== loginSeqRef.current || isLoggingOutRef.current) return;
+
         setGlobalDataState(hydratedGlobal);
         setOutletMonthlyData(rest || {});
 
@@ -1532,17 +1581,19 @@ const App: React.FC = () => {
     } catch (loginError) {
       console.warn('[handleLogin] Notice during login data hydration:', loginError);
     } finally {
-      if (isLoggingOutRef.current) return;
-      const photoURL = auth.currentUser?.photoURL || safeStorage.getItem('BARN_USER_PHOTO') || '';
-      const displayName = auth.currentUser?.displayName || safeStorage.getItem('BARN_USER_NAME') || '';
-      setUser({ email: cleanEmail, isLoggedIn: true, selectedOutlet: outletKey, photoURL, displayName });
-      setIsPublicView(false);
-      safeStorage.setItem('BARN_USER_SESSION', cleanEmail);
-      safeStorage.setItem('MANUAL_USER_EMAIL', cleanEmail);
-      safeStorage.setItem('BARN_SELECTED_OUTLET', outletKey);
-
-      setSyncStatus('online');
-      setIsRefreshing(false);
+      if (myLoginSeq === loginSeqRef.current) {
+        if (!isLoggingOutRef.current) {
+          const photoURL = auth.currentUser?.photoURL || safeStorage.getItem('BARN_USER_PHOTO') || '';
+          const displayName = auth.currentUser?.displayName || safeStorage.getItem('BARN_USER_NAME') || '';
+          setUser({ email: cleanEmail, isLoggedIn: true, selectedOutlet: outletKey, photoURL, displayName });
+          setIsPublicView(false);
+          safeStorage.setItem('BARN_USER_SESSION', cleanEmail);
+          safeStorage.setItem('MANUAL_USER_EMAIL', cleanEmail);
+          safeStorage.setItem('BARN_SELECTED_OUTLET', outletKey);
+          setSyncStatus('online');
+        }
+        setIsRefreshing(false);
+      }
     }
   };
 
@@ -2006,11 +2057,11 @@ const App: React.FC = () => {
   }, [user.isLoggedIn, user.email, user.selectedOutlet]);
 
   useEffect(() => {
-    let monthIdx = parseInt(filters.month);
-    let yearIdx = parseInt(filters.year);
+    let monthIdx = parseInt(String(filters.month), 10);
+    let yearIdx = parseInt(String(filters.year), 10);
 
-    if (isNaN(monthIdx)) monthIdx = new Date().getMonth();
-    if (isNaN(yearIdx)) yearIdx = new Date().getFullYear();
+    if (isNaN(monthIdx) || monthIdx < 0 || monthIdx > 11) monthIdx = new Date().getMonth();
+    if (isNaN(yearIdx) || yearIdx < 2020 || yearIdx > 2100) yearIdx = new Date().getFullYear();
 
     const firstDay = new Date(yearIdx, monthIdx, 1);
     const lastDay = new Date(yearIdx, monthIdx + 1, 0);
@@ -2343,9 +2394,10 @@ const App: React.FC = () => {
 
   const handleLogout = async () => {
     isLoggingOutRef.current = true;
+    autoLoginKeyRef.current = '';
     const loggingOutEmail = user.email;
     const currentUid = auth.currentUser?.uid || '';
-    const tabSessionId = sessionStorage.getItem('SH_TAB_SESSION_ID') || '';
+    const tabSessionId = safeSessionStorage.getItem('SH_TAB_SESSION_ID') || '';
     const presenceKey = currentUid ? `${currentUid}_${tabSessionId}` : '';
 
     try {
@@ -2510,7 +2562,8 @@ const App: React.FC = () => {
     );
   }
 
-  const filteredStaffList = currentData.staffList.filter(s => 
+  const filteredStaffList = (Array.isArray(currentData.staffList) ? currentData.staffList : []).filter(s => 
+    s &&
     (!user.selectedOutlet || user.selectedOutlet === 'ALL' || s.outlet === user.selectedOutlet) && 
     (s.status === 'ACTIVE' || !s.status)
   );

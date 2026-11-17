@@ -1,4 +1,5 @@
 import { Staff, AppState, GSIRow, Division, Outlet, OutletConfig, BankingPromoItem, StrategyMenuItem, CustomSupplier } from './types';
+import { safeStorage } from './lib/safeStorage';
 
 export const DIVISIONS: Division[] = ['SERVICE', 'KITCHEN', 'BAR', 'STORE KEEPER'];
 export const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -31,12 +32,10 @@ export const OUTLET_TYPES: string[] = [
 
 export const getDeletedOutletNames = (): string[] => {
   try {
-    if (typeof window !== 'undefined') {
-      const raw = localStorage.getItem('APP_DELETED_OUTLETS');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) return parsed;
-      }
+    const raw = safeStorage.getItem('APP_DELETED_OUTLETS');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
     }
   } catch (e) {}
   return [];
@@ -44,12 +43,10 @@ export const getDeletedOutletNames = (): string[] => {
 
 export const markOutletDeleted = (name: string) => {
   try {
-    if (typeof window !== 'undefined') {
-      const deleted = getDeletedOutletNames();
-      if (!deleted.includes(name)) {
-        deleted.push(name);
-        localStorage.setItem('APP_DELETED_OUTLETS', JSON.stringify(deleted));
-      }
+    const deleted = getDeletedOutletNames();
+    if (!deleted.includes(name)) {
+      deleted.push(name);
+      safeStorage.setItem('APP_DELETED_OUTLETS', JSON.stringify(deleted));
     }
   } catch (e) {}
 };
@@ -62,7 +59,7 @@ export const getActiveOutletConfigs = (customOutlets?: OutletConfig[]): OutletCo
     return customOutlets.filter(o => !o.isDeleted && (!deletedSet.has(o.name) || defaultNames.has(o.name)));
   }
   try {
-    const raw = typeof window !== 'undefined' ? localStorage.getItem('APP_OUTLET_CONFIGS') : null;
+    const raw = safeStorage.getItem('APP_OUTLET_CONFIGS');
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
@@ -132,12 +129,12 @@ export const getActiveRegionalAreas = (activeNames?: string[]): Record<string, O
 
 export const saveActiveOutletConfigs = (configs: OutletConfig[]) => {
   try {
+    safeStorage.setItem('APP_OUTLET_CONFIGS', JSON.stringify(configs));
     if (typeof window !== 'undefined') {
-      localStorage.setItem('APP_OUTLET_CONFIGS', JSON.stringify(configs));
       window.dispatchEvent(new CustomEvent('appOutletConfigsChanged', { detail: configs }));
     }
   } catch (e) {
-    console.error('Failed to save outlet configs to localStorage', e);
+    console.error('Failed to save outlet configs to storage', e);
   }
 };
 
@@ -672,15 +669,13 @@ export interface DivisionNotes {
 
 export const getStoredOtBudgetSettings = (): { budgetHours: number; ratePerHour: number } => {
   try {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('APP_OT_BUDGET_SETTINGS');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return {
-          budgetHours: Number(parsed.budgetHours) || DEFAULT_OT_BUDGET_HOURS,
-          ratePerHour: Number(parsed.ratePerHour) || DEFAULT_OT_RATE
-        };
-      }
+    const saved = safeStorage.getItem('APP_OT_BUDGET_SETTINGS');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return {
+        budgetHours: Number(parsed.budgetHours) || DEFAULT_OT_BUDGET_HOURS,
+        ratePerHour: Number(parsed.ratePerHour) || DEFAULT_OT_RATE
+      };
     }
   } catch (e) {
     // fallback
@@ -690,9 +685,7 @@ export const getStoredOtBudgetSettings = (): { budgetHours: number; ratePerHour:
 
 export const saveStoredOtBudgetSettings = (settings: { budgetHours: number; ratePerHour: number }) => {
   try {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('APP_OT_BUDGET_SETTINGS', JSON.stringify(settings));
-    }
+    safeStorage.setItem('APP_OT_BUDGET_SETTINGS', JSON.stringify(settings));
   } catch (e) {
     // fallback
   }
@@ -700,19 +693,15 @@ export const saveStoredOtBudgetSettings = (settings: { budgetHours: number; rate
 
 export const getStoredDivisionNotes = (periodKey: string): Record<string, DivisionNotes> => {
   try {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(`APP_DIVISION_NOTES_${periodKey}`);
-      if (saved) return JSON.parse(saved);
-    }
+    const saved = safeStorage.getItem(`APP_DIVISION_NOTES_${periodKey}`);
+    if (saved) return JSON.parse(saved);
   } catch (e) {}
   return {};
 };
 
 export const saveStoredDivisionNotes = (periodKey: string, notes: Record<string, DivisionNotes>) => {
   try {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(`APP_DIVISION_NOTES_${periodKey}`, JSON.stringify(notes));
-    }
+    safeStorage.setItem(`APP_DIVISION_NOTES_${periodKey}`, JSON.stringify(notes));
   } catch (e) {}
 };
 
@@ -735,13 +724,11 @@ export const DEFAULT_BANKING_PROMOS: BankingPromoItem[] = [
 
 export const getStoredBankPromos = (): BankingPromoItem[] => {
   try {
-    if (typeof window !== 'undefined') {
-      const raw = localStorage.getItem('APP_PROMO_SETTINGS');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed?.customBankPromos) && parsed.customBankPromos.length > 0) {
-          return parsed.customBankPromos;
-        }
+    const raw = safeStorage.getItem('APP_PROMO_SETTINGS');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed?.customBankPromos) && parsed.customBankPromos.length > 0) {
+        return parsed.customBankPromos;
       }
     }
   } catch (e) {}
@@ -765,13 +752,11 @@ export const DEFAULT_STRATEGY_MENU_CATALOG: StrategyMenuItem[] = [
 
 export const getStoredStrategyCatalog = (): StrategyMenuItem[] => {
   try {
-    if (typeof window !== 'undefined') {
-      const raw = localStorage.getItem('APP_STRATEGY_CATALOG');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
-        }
+    const raw = safeStorage.getItem('APP_STRATEGY_CATALOG');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
       }
     }
   } catch (e) {}
@@ -780,8 +765,8 @@ export const getStoredStrategyCatalog = (): StrategyMenuItem[] => {
 
 export const saveStoredStrategyCatalog = (items: StrategyMenuItem[]) => {
   try {
+    safeStorage.setItem('APP_STRATEGY_CATALOG', JSON.stringify(items));
     if (typeof window !== 'undefined') {
-      localStorage.setItem('APP_STRATEGY_CATALOG', JSON.stringify(items));
       window.dispatchEvent(new CustomEvent('appStrategyCatalogChanged', { detail: items }));
     }
   } catch (e) {}
@@ -803,13 +788,11 @@ export const DEFAULT_CORE_SUPPLIERS = [
 
 export const getStoredCustomSuppliers = (): CustomSupplier[] => {
   try {
-    if (typeof window !== 'undefined') {
-      const raw = localStorage.getItem('APP_CUSTOM_SUPPLIERS');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          return parsed;
-        }
+    const raw = safeStorage.getItem('APP_CUSTOM_SUPPLIERS');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed;
       }
     }
   } catch (e) {}
@@ -818,8 +801,8 @@ export const getStoredCustomSuppliers = (): CustomSupplier[] => {
 
 export const saveStoredCustomSuppliers = (suppliers: CustomSupplier[]) => {
   try {
+    safeStorage.setItem('APP_CUSTOM_SUPPLIERS', JSON.stringify(suppliers));
     if (typeof window !== 'undefined') {
-      localStorage.setItem('APP_CUSTOM_SUPPLIERS', JSON.stringify(suppliers));
       window.dispatchEvent(new CustomEvent('appCustomSuppliersChanged', { detail: suppliers }));
     }
   } catch (e) {}

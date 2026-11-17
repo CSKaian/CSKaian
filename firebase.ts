@@ -2,9 +2,6 @@ import { initializeApp, getApps, getApp } from "firebase/app";
 import { 
   getFirestore, 
   initializeFirestore, 
-  persistentLocalCache, 
-  persistentMultipleTabManager, 
-  CACHE_SIZE_UNLIMITED,
   memoryLocalCache 
 } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
@@ -20,26 +17,16 @@ const firebaseConfig = {
 
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
-// VERSI IRIT 1000 BROWSER - ANTI LELET
-// Gunakan experimentalForceLongPolling agar koneksi Firestore stabil di iframe/proxy tanpa timeout WebChannel 10 detik
+// Gunakan memoryLocalCache + experimentalForceLongPolling agar bebas crash IndexedDB/BroadcastChannel
+// di dalam iframe, private mode, multi-tab, serta React StrictMode (caching offline ditangani oleh safeStorage + API server)
 let firestoreDb: any;
 try {
   firestoreDb = initializeFirestore(app, {
     experimentalForceLongPolling: true,
-    localCache: persistentLocalCache({
-      tabManager: persistentMultipleTabManager(),
-      cacheSizeBytes: CACHE_SIZE_UNLIMITED
-    })
+    localCache: memoryLocalCache()
   });
 } catch {
-  try {
-    firestoreDb = initializeFirestore(app, {
-      experimentalForceLongPolling: true,
-      localCache: memoryLocalCache()
-    });
-  } catch {
-    firestoreDb = getFirestore(app);
-  }
+  firestoreDb = getFirestore(app);
 }
 
 export const db = firestoreDb;
