@@ -239,9 +239,17 @@ export const VoidBillModule: React.FC<Props> = ({
     }
 
     // Also scan all keys in data.manpowerData for this outlet
-    if (data.manpowerData && typeof data.manpowerData === 'object') {
+    if (data.manpowerData && typeof data.manpowerData === 'object' && currentOutlet) {
+      const targetUp = currentOutlet.trim().toUpperCase();
+      const targetNoSH = targetUp.replace(/^SH\s+/, '').trim();
       Object.entries(data.manpowerData).forEach(([key, mpData]: [string, any]) => {
-        if (!key.startsWith(currentOutlet) || !mpData || !Array.isArray(mpData.sections)) return;
+        const kUp = key.trim().toUpperCase();
+        const kNoSH = kUp.replace(/^SH\s+/, '').trim();
+        const isMatch =
+          kUp === targetUp ||
+          kUp.startsWith(`${targetUp}_`) ||
+          (Boolean(targetNoSH) && (kNoSH === targetNoSH || kNoSH.startsWith(`${targetNoSH}_`)));
+        if (!isMatch || !mpData || !Array.isArray(mpData.sections)) return;
         mpData.sections.forEach((sec: any) => {
           if (Array.isArray(sec.slots)) {
             sec.slots.forEach((slot: any) => {

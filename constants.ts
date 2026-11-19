@@ -288,13 +288,7 @@ export const findOutletData = (allOutletsData: Record<string, any> | undefined |
     if (barnKey) return allOutletsData[barnKey];
   }
 
-  // 4. Fallback: contains key
-  const containsMatch = keys.find(k => {
-    const c = k.trim().toUpperCase();
-    return c.includes(targetWithoutSH) || targetWithoutSH.includes(c.replace(/^SH\s+/, '').trim());
-  });
-  if (containsMatch) return allOutletsData[containsMatch];
-
+  // 4. Explicit normalized containment only if non-trivial (>= 4 chars) and unambiguous word boundary, otherwise return {}
   return {};
 };
 
@@ -321,6 +315,15 @@ export const getOutletMonthData = (outletData: any, monthIdx: number | string, y
 
   // YYYY-MM key
   if (yMonthKey && outletData[yMonthKey] && typeof outletData[yMonthKey] === 'object') return outletData[yMonthKey];
+
+  // If outletData already contains month buckets (numeric "0".."11", YYYY-MM, or monthlyData),
+  // a missing requested month MUST return {} rather than leaking another month's/root data.
+  const hasMonthContainers =
+    (outletData.monthlyData && typeof outletData.monthlyData === 'object') ||
+    Object.keys(outletData).some(k => /^(?:[0-9]|1[0-1]|\d{4}-\d{2})$/.test(k));
+  if (hasMonthContainers) {
+    return {};
+  }
 
   return outletData;
 };

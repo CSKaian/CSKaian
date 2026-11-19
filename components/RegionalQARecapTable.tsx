@@ -143,7 +143,7 @@ export const RegionalQARecapTable: React.FC<Props> = ({
         }
 
         // 2. If this is the active outlet in globalData
-        if (globalData && (globalData.outlet === outletName || !selectedOutlet)) {
+        if (globalData && globalData.outlet && globalData.outlet.trim().toUpperCase() === outletName.trim().toUpperCase()) {
           if (globalData.dailyQA) {
             Object.entries(globalData.dailyQA).forEach(([d, q]) => {
               if (d.startsWith(monthPrefix) && q) auditsMap[d] = q as QAData;

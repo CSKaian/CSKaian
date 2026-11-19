@@ -793,23 +793,57 @@ export const resolveOutletManpowerData = (
  */
 export const extractOutletManpowerMap = (
   outletRawData: any,
-  globalManpower?: Record<string, any>
+  globalManpower?: Record<string, any>,
+  targetOutlet?: string
 ): Record<string, OutletManpowerData> => {
   const map: Record<string, OutletManpowerData> = {};
+  const targetUpper = (targetOutlet || '').trim().toUpperCase();
+  const targetNoSH = targetUpper.replace(/^SH\s+/, '').trim();
+  const matchesTargetKey = (key: string, mpVal?: any): boolean => {
+    if (!targetUpper) return true;
+    const kUpper = key.trim().toUpperCase();
+    const kNoSH = kUpper.replace(/^SH\s+/, '').trim();
+    if (
+      kUpper === targetUpper ||
+      kUpper.startsWith(`${targetUpper}_`) ||
+      (targetNoSH && (kNoSH === targetNoSH || kNoSH.startsWith(`${targetNoSH}_`)))
+    ) {
+      return true;
+    }
+    const mpOutlet = String(mpVal?.outlet || '').trim().toUpperCase();
+    if (mpOutlet) {
+      const mpNoSH = mpOutlet.replace(/^SH\s+/, '').trim();
+      return mpOutlet === targetUpper || (Boolean(targetNoSH) && mpNoSH === targetNoSH);
+    }
+    return false;
+  };
+
   if (globalManpower && typeof globalManpower === 'object') {
-    Object.assign(map, globalManpower);
+    Object.entries(globalManpower).forEach(([k, v]) => {
+      if (v && matchesTargetKey(k, v)) {
+        map[k] = v;
+      }
+    });
   }
   if (!outletRawData || typeof outletRawData !== 'object') {
     return map;
   }
   if (outletRawData.manpowerData && typeof outletRawData.manpowerData === 'object') {
-    Object.assign(map, outletRawData.manpowerData);
+    Object.entries(outletRawData.manpowerData).forEach(([k, v]: [string, any]) => {
+      if (v && matchesTargetKey(k, v)) {
+        map[k] = v;
+      }
+    });
   }
   // Check each month 0..11
   for (let m = 0; m < 12; m++) {
     const mData = outletRawData[String(m)] || outletRawData[m] || outletRawData?.monthlyData?.[String(m)] || outletRawData?.monthlyData?.[m];
     if (mData?.manpowerData && typeof mData.manpowerData === 'object') {
-      Object.assign(map, mData.manpowerData);
+      Object.entries(mData.manpowerData).forEach(([k, v]: [string, any]) => {
+        if (v && matchesTargetKey(k, v)) {
+          map[k] = v;
+        }
+      });
     }
   }
   return map;
@@ -897,10 +931,18 @@ export const extractOutletStaffOptions = (
     });
   }
 
-  // 2. Scan other manpower keys belonging to this outlet
-  if (manpowerData && typeof manpowerData === 'object') {
+  // 2. Scan other manpower keys belonging to this outlet (strict key boundary)
+  const outletUpper = (currentOutlet || '').trim().toUpperCase();
+  const outletNoSH = outletUpper.replace(/^SH\s+/, '').trim();
+  if (manpowerData && typeof manpowerData === 'object' && outletUpper) {
     Object.entries(manpowerData).forEach(([key, mpData]: [string, any]) => {
-      if (!key.toUpperCase().startsWith(currentOutlet.toUpperCase()) || !mpData || !Array.isArray(mpData.sections)) return;
+      const keyUpper = key.trim().toUpperCase();
+      const keyNoSH = keyUpper.replace(/^SH\s+/, '').trim();
+      const isMatch =
+        keyUpper === outletUpper ||
+        keyUpper.startsWith(`${outletUpper}_`) ||
+        (outletNoSH && (keyNoSH === outletNoSH || keyNoSH.startsWith(`${outletNoSH}_`)));
+      if (!isMatch || !mpData || !Array.isArray(mpData.sections)) return;
       mpData.sections.forEach((sec: any) => {
         if (Array.isArray(sec.slots)) {
           sec.slots.forEach((slot: any) => {
@@ -924,11 +966,18 @@ export const extractOutletStaffOptions = (
   // 3. Fallback: Active staffList for this outlet
   if (Array.isArray(staffList)) {
     staffList.forEach((s) => {
+      const sOutlet = (s?.outlet || '').trim().toUpperCase();
+      const sOutletNoSH = sOutlet.replace(/^SH\s+/, '').trim();
+      const outletMatches =
+        currentOutlet === 'ALL' ||
+        (!sOutlet && Boolean(outletUpper)) ||
+        sOutlet === outletUpper ||
+        (Boolean(outletNoSH) && sOutletNoSH === outletNoSH);
       if (
         s &&
         s.name &&
         (s.status === 'ACTIVE' || !s.status) &&
-        (!s.outlet || s.outlet.toUpperCase() === currentOutlet.toUpperCase() || currentOutlet === 'ALL')
+        outletMatches
       ) {
         addStaff(
           s.name,

@@ -280,10 +280,26 @@ export const ManpowerTableModule: React.FC<Props> = ({
   const handleSubmitManpower = async (updatedData: OutletManpowerData = manpowerState, isManual: boolean = true) => {
     setIsSubmitting(true);
     try {
-      const all = { ...(data.manpowerData || {}) };
-      all[outletKey] = updatedData;
-      all[legacyOutletKey] = updatedData;
-      all[`${selectedOutlet}_LATEST`] = updatedData;
+      const targetUp = (selectedOutlet || '').trim().toUpperCase();
+      const targetNoSH = targetUp.replace(/^SH\s+/, '').trim();
+      const all: Record<string, any> = {};
+      Object.entries(data.manpowerData || {}).forEach(([k, v]: [string, any]) => {
+        if (!v) return;
+        const kUp = k.trim().toUpperCase();
+        const kNoSH = kUp.replace(/^SH\s+/, '').trim();
+        const vOut = String(v.outlet || '').trim().toUpperCase().replace(/^SH\s+/, '');
+        if (vOut && vOut !== targetNoSH) return;
+        if (
+          kUp === targetUp ||
+          kUp.startsWith(`${targetUp}_`) ||
+          (targetNoSH && (kNoSH === targetNoSH || kNoSH.startsWith(`${targetNoSH}_`)))
+        ) {
+          all[k] = v;
+        }
+      });
+      all[outletKey] = { ...updatedData, outlet: selectedOutlet };
+      all[legacyOutletKey] = { ...updatedData, outlet: selectedOutlet };
+      all[`${selectedOutlet}_LATEST`] = { ...updatedData, outlet: selectedOutlet };
 
       // Update parent App state
       onUpdate('manpowerData', all, true);

@@ -61,7 +61,7 @@ export const RegionalManpowerRecapTable: React.FC<Props> = ({
     return targetOutlets.map(outlet => {
       const area = getAreaForOutlet(outlet) || 'JAKARTA';
       const outletRawData = allOutletsData?.[outlet] || {};
-      const allManpower = extractOutletManpowerMap(outletRawData, globalData?.manpowerData);
+      const allManpower = extractOutletManpowerMap(outletRawData, globalData?.manpowerData, outlet);
       const mpData: OutletManpowerData = resolveOutletManpowerData(allManpower, outlet, monthKey);
       const summary = calculateManpowerSummary(mpData);
 

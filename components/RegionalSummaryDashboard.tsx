@@ -654,7 +654,7 @@ export const RegionalSummaryDashboard: React.FC<Props> = ({
       const opexPercent = d.opexPercent;
 
       // Manpower from Outlet Manpower Table
-      const allMp = extractOutletManpowerMap(outletMonths, globalData?.manpowerData);
+      const allMp = extractOutletManpowerMap(outletMonths, globalData?.manpowerData, d.outlet);
       const outletMpData = resolveOutletManpowerData(allMp, d.outlet, monthKey);
       const mpSummary = calculateManpowerSummary(outletMpData);
       const mpFulfillment = mpSummary.grandTotalBudget > 0 ? (mpSummary.grandTotalActual / mpSummary.grandTotalBudget) * 100 : 0;

@@ -278,7 +278,7 @@ export const buildSingleOutletWaReport = (
   // ==========================================
   // 4. OVERTIME (Cut-off 26 - 25)
   // ==========================================
-  const allManpower = extractOutletManpowerMap(outletDoc, globalData?.manpowerData);
+  const allManpower = extractOutletManpowerMap(outletDoc, globalData?.manpowerData, outletName);
   const mpData: OutletManpowerData = resolveOutletManpowerData(allManpower, outletName, monthKey);
   const mpSummary = calculateManpowerSummary(mpData);
   const totalManPower = mpSummary.grandTotalActual;
@@ -291,6 +291,7 @@ export const buildSingleOutletWaReport = (
   ];
 
   const allDailyOT: Record<string, any[]> = {};
+  const targetNormOT = outletName.trim().toUpperCase().replace(/^SH\s+/, '');
   const mergeOT = (source: Record<string, any[]>) => {
     if (!source || typeof source !== 'object') return;
     Object.entries(source).forEach(([dStr, arr]) => {
@@ -298,7 +299,8 @@ export const buildSingleOutletWaReport = (
       if (!allDailyOT[dStr]) allDailyOT[dStr] = [];
       arr.forEach((e: any) => {
         if (!e) return;
-        if (!e.outlet || e.outlet === outletName) allDailyOT[dStr].push(e);
+        const eNorm = String(e.outlet || '').trim().toUpperCase().replace(/^SH\s+/, '');
+        if (!eNorm || eNorm === targetNormOT) allDailyOT[dStr].push(e);
       });
     });
   };

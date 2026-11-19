@@ -119,6 +119,11 @@ export const PattyCashExpenseModule: React.FC<Props> = ({
     : (propSelectedOutlet || 'SH THE BARN');
 
   const [activeOutlet, setActiveOutlet] = useState<string>(defaultOutlet);
+  React.useEffect(() => {
+    if (propSelectedOutlet) {
+      setActiveOutlet(propSelectedOutlet);
+    }
+  }, [propSelectedOutlet]);
   const [moduleTab, setModuleTab] = useState<'REGIONAL_RECAP' | 'INPUT' | 'MATRIX' | 'FULL_DATE'>(
     isRegionalView ? 'REGIONAL_RECAP' : 'INPUT'
   );
@@ -885,7 +890,8 @@ export const PattyCashExpenseModule: React.FC<Props> = ({
     };
   }, [mtdActualRevenue]);
 
-  // Saved category nominal budgets
+  // Saved category nominal budgets (strictly scoped per outlet)
+  const budgetOutletScope = (activeOutlet && activeOutlet !== 'ALL' ? activeOutlet : (propSelectedOutlet || data?.outlet || '')).trim();
   const categoryNominalBudgets = useMemo(() => {
     const savedMonthly = data.monthlyPattyCashCategoryBudgets?.[monthPrefix];
     if (savedMonthly && Object.keys(savedMonthly).length > 0) return savedMonthly;
@@ -894,14 +900,16 @@ export const PattyCashExpenseModule: React.FC<Props> = ({
       return data.pattyCashCategoryBudgets;
     }
 
-    const localSaved = localStorage.getItem(`PATTY_CASH_CAT_BUDGET_NOMINAL_${monthPrefix}`);
-    if (localSaved) {
-      try { return JSON.parse(localSaved); } catch (e) { /* ignore */ }
-    }
+    if (budgetOutletScope) {
+      const localSaved = localStorage.getItem(`PATTY_CASH_CAT_BUDGET_NOMINAL_${budgetOutletScope}_${monthPrefix}`);
+      if (localSaved) {
+        try { return JSON.parse(localSaved); } catch (e) { /* ignore */ }
+      }
 
-    const globalSaved = localStorage.getItem('PATTY_CASH_CAT_BUDGET_NOMINAL');
-    if (globalSaved) {
-      try { return JSON.parse(globalSaved); } catch (e) { /* ignore */ }
+      const globalOutletSaved = localStorage.getItem(`PATTY_CASH_CAT_BUDGET_NOMINAL_${budgetOutletScope}`);
+      if (globalOutletSaved) {
+        try { return JSON.parse(globalOutletSaved); } catch (e) { /* ignore */ }
+      }
     }
 
     // If legacy percentage exists and MTD actual revenue > 0, convert to nominals
@@ -916,7 +924,7 @@ export const PattyCashExpenseModule: React.FC<Props> = ({
     }
 
     return DEFAULT_CAT_BUDGET_NOMINALS;
-  }, [data.monthlyPattyCashCategoryBudgets, data.pattyCashCategoryBudgets, data.monthlyPattyCashCategoryBudgetPct, data.pattyCashCategoryBudgetPct, monthPrefix, mtdActualRevenue, DEFAULT_CAT_BUDGET_NOMINALS]);
+  }, [data.monthlyPattyCashCategoryBudgets, data.pattyCashCategoryBudgets, data.monthlyPattyCashCategoryBudgetPct, data.pattyCashCategoryBudgetPct, budgetOutletScope, monthPrefix, mtdActualRevenue, DEFAULT_CAT_BUDGET_NOMINALS]);
 
   // Total Patty Cash Budget Nominal (Sum of all category nominal budgets)
   const pattyCashBudget = useMemo(() => {
@@ -1172,8 +1180,10 @@ export const PattyCashExpenseModule: React.FC<Props> = ({
       onUpdate('pattyCashBudgetPercentage', totalPct);
     }
 
-    localStorage.setItem(`PATTY_CASH_CAT_BUDGET_NOMINAL_${monthPrefix}`, JSON.stringify(updatedNominals));
-    localStorage.setItem('PATTY_CASH_CAT_BUDGET_NOMINAL', JSON.stringify(updatedNominals));
+    if (budgetOutletScope) {
+      localStorage.setItem(`PATTY_CASH_CAT_BUDGET_NOMINAL_${budgetOutletScope}_${monthPrefix}`, JSON.stringify(updatedNominals));
+      localStorage.setItem(`PATTY_CASH_CAT_BUDGET_NOMINAL_${budgetOutletScope}`, JSON.stringify(updatedNominals));
+    }
 
     setIsEditingBudgetModal(false);
     showToast?.(`Budget Kategori Patty Cash (Total: Rp ${totalNominal.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}) berhasil disimpan!`, 'success');

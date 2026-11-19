@@ -76,13 +76,14 @@ export const resolvePattyCashBudget = (
 
   if (typeof window !== 'undefined' && window.localStorage) {
     try {
-      const keysToTry = [
-        outletName ? `PATTY_CASH_CAT_BUDGET_NOMINAL_${outletName}_${monthKey}` : null,
-        `PATTY_CASH_CAT_BUDGET_NOMINAL_${monthKey}`,
-        `PATTY_CASH_CAT_BUDGET_NOMINAL`,
-        `EXPENSE_CATEGORY_BUDGETS_${monthKey}`,
-        `EXPENSE_CATEGORY_BUDGETS`
-      ].filter(Boolean) as string[];
+      const keysToTry = outletName
+        ? [
+            `PATTY_CASH_CAT_BUDGET_NOMINAL_${outletName}_${monthKey}`,
+            `PATTY_CASH_CAT_BUDGET_NOMINAL_${outletName}`,
+            `EXPENSE_CATEGORY_BUDGETS_${outletName}_${monthKey}`,
+            `EXPENSE_CATEGORY_BUDGETS_${outletName}`
+          ]
+        : [];
 
       for (const k of keysToTry) {
         const item = localStorage.getItem(k);

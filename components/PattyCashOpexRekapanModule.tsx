@@ -50,21 +50,24 @@ const PattyCashOpexRekapanModule: React.FC<Props> = ({ data, allMonthlyData, fil
     return new Date(lastMonthYear, lastMonthIndex + 1, 0).getDate();
   }, [lastMonthYear, lastMonthIndex]);
 
-  // Resolve Category Budgets
+  // Resolve Category Budgets (strictly scoped per outlet)
+  const budgetOutletScope = (selectedOutlet && selectedOutlet !== 'ALL' ? selectedOutlet : (data?.outlet || '')).trim();
   const categoryBudgets = useMemo(() => {
     const monthlyState = currentMonthState.monthlyExpenseCategoryBudgets?.[currentMonthPrefix];
     if (monthlyState) return monthlyState;
 
     if (currentMonthState.expenseCategoryBudgets) return currentMonthState.expenseCategoryBudgets;
 
-    const savedLocal = safeStorage.getItem(`EXPENSE_CATEGORY_BUDGETS_${currentMonthPrefix}`);
-    if (savedLocal) {
-      try { return JSON.parse(savedLocal); } catch (e) { /* ignore */ }
-    }
+    if (budgetOutletScope) {
+      const savedLocal = safeStorage.getItem(`EXPENSE_CATEGORY_BUDGETS_${budgetOutletScope}_${currentMonthPrefix}`);
+      if (savedLocal) {
+        try { return JSON.parse(savedLocal); } catch (e) { /* ignore */ }
+      }
 
-    const savedGlobal = safeStorage.getItem('EXPENSE_CATEGORY_BUDGETS');
-    if (savedGlobal) {
-      try { return JSON.parse(savedGlobal); } catch (e) { /* ignore */ }
+      const savedGlobal = safeStorage.getItem(`EXPENSE_CATEGORY_BUDGETS_${budgetOutletScope}`);
+      if (savedGlobal) {
+        try { return JSON.parse(savedGlobal); } catch (e) { /* ignore */ }
+      }
     }
 
     return {
@@ -75,7 +78,7 @@ const PattyCashOpexRekapanModule: React.FC<Props> = ({ data, allMonthlyData, fil
       atk: 0,
       asset: 0,
     };
-  }, [currentMonthState, currentMonthPrefix]);
+  }, [currentMonthState, currentMonthPrefix, budgetOutletScope]);
 
   const [isEditingBudgets, setIsEditingBudgets] = useState(false);
   const [tempCategoryBudgets, setTempCategoryBudgets] = useState({
@@ -106,8 +109,10 @@ const PattyCashOpexRekapanModule: React.FC<Props> = ({ data, allMonthlyData, fil
       onUpdate('expenseCategoryBudgets', updated);
     }
 
-    safeStorage.setItem(`EXPENSE_CATEGORY_BUDGETS_${currentMonthPrefix}`, JSON.stringify(updated));
-    safeStorage.setItem('EXPENSE_CATEGORY_BUDGETS', JSON.stringify(updated));
+    if (budgetOutletScope) {
+      safeStorage.setItem(`EXPENSE_CATEGORY_BUDGETS_${budgetOutletScope}_${currentMonthPrefix}`, JSON.stringify(updated));
+      safeStorage.setItem(`EXPENSE_CATEGORY_BUDGETS_${budgetOutletScope}`, JSON.stringify(updated));
+    }
 
     setIsEditingBudgets(false);
     showToast?.(`Budget Kategori Expense untuk ${MONTHS[selectedMonth]} ${selectedYear} berhasil disimpan!`, 'success');

@@ -3414,7 +3414,7 @@ const RegionalManagerModule: React.FC<RMProps> = ({
               {activeTab === 'WEEKLY_OVERTIME' && (
                 <RegionalWeeklyOvertimeRecapTable
                   allOutletsData={allOutletsData}
-                  globalData={activeData || globalData}
+                  globalData={selectedOutlet ? activeData : undefined}
                   selectedMonth={selectedMonth}
                   selectedYear={selectedYear}
                   selectedArea={selectedArea}
@@ -3426,7 +3426,7 @@ const RegionalManagerModule: React.FC<RMProps> = ({
               {activeTab === 'MANPOWER_REGIONAL' && (
                 <RegionalManpowerRecapTable
                   allOutletsData={allOutletsData}
-                  globalData={activeData || globalData}
+                  globalData={selectedOutlet ? activeData : undefined}
                   selectedMonth={selectedMonth}
                   selectedYear={selectedYear}
                   selectedArea={selectedArea}
@@ -3438,7 +3438,7 @@ const RegionalManagerModule: React.FC<RMProps> = ({
               {activeTab === 'QA_REPORT_REGIONAL' && (
                 <RegionalQARecapTable
                   allOutletsData={allOutletsData}
-                  globalData={activeData || globalData}
+                  globalData={selectedOutlet ? activeData : undefined}
                   selectedMonth={selectedMonth}
                   selectedYear={selectedYear}
                   selectedArea={selectedArea}
@@ -3475,6 +3475,7 @@ const RegionalManagerModule: React.FC<RMProps> = ({
                   onUpdate={(k, v) => onUpdate && onUpdate(k, v)}
                   filters={{ month: String(selectedMonth), year: String(selectedYear), startDate: `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-01`, endDate: `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-28` }}
                   showToast={showToast}
+                  selectedOutlet={selectedOutlet || undefined}
                 />
               )}
               {activeTab === 'REKAPAN_PATTY_CASH' && (

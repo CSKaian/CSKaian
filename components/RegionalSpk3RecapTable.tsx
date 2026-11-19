@@ -103,13 +103,19 @@ export const RegionalSpk3RecapTable: React.FC<Props> = ({
       }
       candidateStates.push(outletRaw);
 
+      const outletNorm = outletName.trim().toUpperCase().replace(/^SH\s+/, '');
+      const belongsToOutlet = (recOutlet?: string) => {
+        if (!recOutlet) return true;
+        return recOutlet.trim().toUpperCase().replace(/^SH\s+/, '') === outletNorm;
+      };
+
       candidateStates.forEach(st => {
         if (!st) return;
         if (st.dailySpk3Records && typeof st.dailySpk3Records === 'object') {
           Object.entries(st.dailySpk3Records).forEach(([dKey, dayList]) => {
             if (Array.isArray(dayList)) {
               dayList.forEach((rec: any) => {
-                if (rec && rec.id) {
+                if (rec && rec.id && belongsToOutlet(rec.outlet)) {
                   const recDate = String(rec.date || dKey || '');
                   if (recDate.startsWith(monthKey) && !seenIds.has(rec.id)) {
                     seenIds.add(rec.id);
@@ -122,7 +128,7 @@ export const RegionalSpk3RecapTable: React.FC<Props> = ({
         }
         if (Array.isArray(st.spk3Records)) {
           st.spk3Records.forEach((rec: any) => {
-            if (rec && rec.id) {
+            if (rec && rec.id && belongsToOutlet(rec.outlet)) {
               const recDate = String(rec.date || '');
               if (recDate.startsWith(monthKey) && !seenIds.has(rec.id)) {
                 seenIds.add(rec.id);

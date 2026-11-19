@@ -330,6 +330,12 @@ export const RegionalOutletReviewTable: React.FC<Props> = ({
           }
         });
       }
+      const outletNorm = outletName.trim().toUpperCase().replace(/^SH\s+/, '');
+      const belongsToOutlet = (recOutlet?: string) => {
+        if (!recOutlet) return true;
+        return recOutlet.trim().toUpperCase().replace(/^SH\s+/, '') === outletNorm;
+      };
+
       if (otTotalHours === 0) {
         const combinedDailyOT: Record<string, any[]> = {
           ...(outletMonths.dailyOvertime || {}),
@@ -340,6 +346,7 @@ export const RegionalOutletReviewTable: React.FC<Props> = ({
           const rowArr = Array.isArray(entries) ? entries : (entries && typeof entries === 'object' ? Object.values(entries) : []);
           if (dateStr >= cutoffStart && dateStr <= cutoffEnd && rowArr.length > 0) {
             rowArr.forEach((e: any) => {
+              if (!e || !belongsToOutlet(e.outlet)) return;
               otTotalHours += Number(e.hours) || Number(e.overtimeHours) || 0;
             });
           }
@@ -390,7 +397,7 @@ export const RegionalOutletReviewTable: React.FC<Props> = ({
           Object.entries(st.dailyOperationalIssues).forEach(([dKey, dArr]) => {
             if (Array.isArray(dArr)) {
               dArr.forEach((rec: any) => {
-                if (rec && rec.id) {
+                if (rec && rec.id && belongsToOutlet(rec.outlet)) {
                   const rDate = String(rec.date || dKey || '');
                   if (rDate.startsWith(monthKey) && !seenIssueIds.has(rec.id)) {
                     seenIssueIds.add(rec.id);
@@ -403,7 +410,7 @@ export const RegionalOutletReviewTable: React.FC<Props> = ({
         }
         if (Array.isArray(st.operationalIssues)) {
           st.operationalIssues.forEach((rec: any) => {
-            if (rec && rec.id) {
+            if (rec && rec.id && belongsToOutlet(rec.outlet)) {
               const rDate = String(rec.date || '');
               if (rDate.startsWith(monthKey) && !seenIssueIds.has(rec.id)) {
                 seenIssueIds.add(rec.id);
@@ -443,7 +450,7 @@ export const RegionalOutletReviewTable: React.FC<Props> = ({
           Object.entries(st.dailyVoidBills).forEach(([dKey, dArr]) => {
             if (Array.isArray(dArr)) {
               dArr.forEach((rec: any) => {
-                if (rec && rec.id) {
+                if (rec && rec.id && belongsToOutlet(rec.outlet)) {
                   const rDate = String(rec.date || dKey || '');
                   if (rDate.startsWith(monthKey) && !seenVoidIds.has(rec.id)) {
                     seenVoidIds.add(rec.id);
@@ -456,7 +463,7 @@ export const RegionalOutletReviewTable: React.FC<Props> = ({
         }
         if (Array.isArray(st.voidBills)) {
           st.voidBills.forEach((rec: any) => {
-            if (rec && rec.id) {
+            if (rec && rec.id && belongsToOutlet(rec.outlet)) {
               const rDate = String(rec.date || '');
               if (rDate.startsWith(monthKey) && !seenVoidIds.has(rec.id)) {
                 seenVoidIds.add(rec.id);
@@ -479,7 +486,7 @@ export const RegionalOutletReviewTable: React.FC<Props> = ({
           Object.entries(st.dailySpk3Records).forEach(([dKey, dArr]) => {
             if (Array.isArray(dArr)) {
               dArr.forEach((rec: any) => {
-                if (rec && rec.id) {
+                if (rec && rec.id && belongsToOutlet(rec.outlet)) {
                   const rDate = String(rec.date || dKey || '');
                   if (rDate.startsWith(monthKey) && !seenSpk3Ids.has(rec.id)) {
                     seenSpk3Ids.add(rec.id);
@@ -492,7 +499,7 @@ export const RegionalOutletReviewTable: React.FC<Props> = ({
         }
         if (Array.isArray(st.spk3Records)) {
           st.spk3Records.forEach((rec: any) => {
-            if (rec && rec.id) {
+            if (rec && rec.id && belongsToOutlet(rec.outlet)) {
               const rDate = String(rec.date || '');
               if (rDate.startsWith(monthKey) && !seenSpk3Ids.has(rec.id)) {
                 seenSpk3Ids.add(rec.id);

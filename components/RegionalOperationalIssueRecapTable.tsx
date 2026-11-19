@@ -125,6 +125,12 @@ export const RegionalOperationalIssueRecapTable: React.FC<Props> = ({
       }
       candidateStates.push(outletRaw);
 
+      const outletNorm = outletName.trim().toUpperCase().replace(/^SH\s+/, '');
+      const belongsToOutlet = (recOutlet?: string) => {
+        if (!recOutlet) return true;
+        return recOutlet.trim().toUpperCase().replace(/^SH\s+/, '') === outletNorm;
+      };
+
       candidateStates.forEach(st => {
         if (!st) return;
 
@@ -132,7 +138,7 @@ export const RegionalOperationalIssueRecapTable: React.FC<Props> = ({
           Object.entries(st.dailyOperationalIssues).forEach(([dKey, dayList]) => {
             if (Array.isArray(dayList)) {
               dayList.forEach((rec: any) => {
-                if (rec && rec.id) {
+                if (rec && rec.id && belongsToOutlet(rec.outlet)) {
                   const recDate = String(rec.date || dKey || '');
                   if (recDate.startsWith(monthKey) && !seenIds.has(rec.id)) {
                     seenIds.add(rec.id);
@@ -151,7 +157,7 @@ export const RegionalOperationalIssueRecapTable: React.FC<Props> = ({
 
         if (Array.isArray(st.operationalIssues)) {
           st.operationalIssues.forEach((rec: any) => {
-            if (rec && rec.id) {
+            if (rec && rec.id && belongsToOutlet(rec.outlet)) {
               const recDate = String(rec.date || '');
               if (recDate.startsWith(monthKey) && !seenIds.has(rec.id)) {
                 seenIds.add(rec.id);
